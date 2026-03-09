@@ -232,7 +232,7 @@ export default function ConfluxaFrontendPrototype() {
         <aside className="border-r border-slate-200 bg-white">
           <div className="flex h-16 items-center px-6">
             <div className="flex items-center gap-3">
-              <img src="/confluxa-logo.png" alt="Confluxa" className="h-10 w-10 rounded-xl object-contain" />
+              <img src="/confluxa-logo.png" alt="Confluxa" className="h-14 w-14 rounded-xl object-contain" />
               <div>
                 <div className="font-semibold">Confluxa</div>
                 <div className="text-xs text-slate-500">Operations Console</div>
