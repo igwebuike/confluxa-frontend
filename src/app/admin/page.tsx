@@ -26,6 +26,8 @@ import {
   LifeBuoy,
   FileWarning,
   ChevronRight,
+  ExternalLink,
+  Eye,
 } from "lucide-react";
 
 import {
@@ -98,6 +100,7 @@ type LeadRow = {
 
 type TenantRow = {
   id: string;
+  tenant_key?: string;
   name: string;
   phone_number: string;
   status: string;
@@ -125,6 +128,49 @@ type Health = {
   };
 };
 
+type TenantPhoneNumber = {
+  id: string;
+  tenant_id: string;
+  label: string;
+  country_code: string;
+  phone_number: string;
+  phone_e164?: string;
+  notification_email?: string;
+  delivery_mode?: string;
+  is_active: boolean;
+  is_primary: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+
+type TenantRecipient = {
+  id: string;
+  email: string;
+  notification_type: string;
+  is_active: boolean;
+  created_at?: string;
+};
+
+type TenantDetail = {
+  ok: boolean;
+  tenant?: {
+    id: string;
+    tenant_key: string;
+    name: string;
+    display_name?: string;
+    is_active: boolean;
+    created_at?: string;
+  };
+  phone_numbers?: TenantPhoneNumber[];
+  notification_recipients?: TenantRecipient[];
+  stats?: {
+    calls: number;
+    contacts: number;
+    integrations: number;
+  };
+  error?: string;
+};
+
 type AdminSection =
   | "overview"
   | "tenants"
@@ -136,6 +182,10 @@ type AdminSection =
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
   "https://confluxa-core.onrender.com";
+
+const APP_BASE =
+  process.env.NEXT_PUBLIC_APP_BASE_URL?.replace(/\/+$/, "") ||
+  "https://app.getconfluxa.com";
 
 const emptySummary: Summary = {
   calls_today: 0,
@@ -289,10 +339,17 @@ export default function ConfluxaAdminPage() {
   const [query, setQuery] = useState("");
   const [tenantFilter, setTenantFilter] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [savingTenant, setSavingTenant] = useState(false);
+  const [loadingTenantDetail, setLoadingTenantDetail] = useState(false);
   const [error, setError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
 
   const [showNewTenantModal, setShowNewTenantModal] = useState(false);
+  const [showTenantDetailModal, setShowTenantDetailModal] = useState(false);
+
+  const [selectedTenantId, setSelectedTenantId] = useState<string>("");
+  const [selectedTenantDetail, setSelectedTenantDetail] =
+    useState<TenantDetail | null>(null);
 
   const [newTenant, setNewTenant] = useState({
     business_name: "",
@@ -305,7 +362,6 @@ export default function ConfluxaAdminPage() {
   async function loadData() {
     setLoading(true);
     setError("");
-    setActionMessage("");
 
     try {
       const [summaryRes, callsRes, leadsRes, tenantsRes, healthRes] =
@@ -324,7 +380,9 @@ export default function ConfluxaAdminPage() {
       setHealth(healthRes || null);
     } catch (e) {
       console.error(e);
-      setError("Could not load admin data. Check API base URL and backend health.");
+      setError(
+        "Could not load admin data. Check API base URL and backend health."
+      );
     } finally {
       setLoading(false);
     }
@@ -382,11 +440,7 @@ export default function ConfluxaAdminPage() {
         tenantFilter === "all" ||
         tenant.name?.toLowerCase() === tenantFilter.toLowerCase();
 
-      const haystack = [
-        tenant.name,
-        tenant.phone_number,
-        tenant.status,
-      ]
+      const haystack = [tenant.name, tenant.phone_number, tenant.status]
         .join(" ")
         .toLowerCase();
 
@@ -404,7 +458,10 @@ export default function ConfluxaAdminPage() {
   }, [health]);
 
   const monthlyAgencyMrr = useMemo(() => {
-    return tenants.filter((t) => t.status.toLowerCase().includes("active")).length * 1500;
+    return (
+      tenants.filter((t) => t.status.toLowerCase().includes("active")).length *
+      1500
+    );
   }, [tenants]);
 
   const setupFeesThisMonth = useMemo(() => {
@@ -416,17 +473,107 @@ export default function ConfluxaAdminPage() {
     if (nextSection) setSection(nextSection);
   }
 
-  function saveNewTenant() {
+  function resetNewTenantForm() {
+    setNewTenant({
+      business_name: "",
+      notification_email: "",
+      phone_number: "",
+      industry: "hvac",
+      delivery_mode: "email",
+    });
+  }
+
+  async function loadTenantDetail(tenantId: string) {
+    if (!tenantId) return;
+
+    setLoadingTenantDetail(true);
+    setActionMessage("");
+
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/tenants/${tenantId}`);
+      const data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "Failed to load tenant details.");
+      }
+
+      setSelectedTenantId(tenantId);
+      setSelectedTenantDetail(data);
+      setShowTenantDetailModal(true);
+    } catch (e: any) {
+      console.error(e);
+      setActionMessage(e.message || "Could not load tenant detail.");
+    } finally {
+      setLoadingTenantDetail(false);
+    }
+  }
+
+  async function saveNewTenant() {
     if (!newTenant.business_name.trim()) {
       setActionMessage("Enter a business name first.");
       return;
     }
 
-    setActionMessage(
-      `Tenant form ready: ${newTenant.business_name}. Next step is wiring this modal to POST /api/tenants.`
-    );
-    setShowNewTenantModal(false);
-    setSection("tenants");
+    setSavingTenant(true);
+    setActionMessage("");
+    setError("");
+
+    try {
+      const payload = {
+        name: newTenant.business_name.trim(),
+        display_name: newTenant.business_name.trim(),
+        phone_number: newTenant.phone_number.trim() || undefined,
+        notification_email:
+          newTenant.notification_email.trim() || undefined,
+        delivery_mode: newTenant.delivery_mode || "email",
+        country_code: "US",
+        label: "Main",
+        is_active: true,
+      };
+
+      const res = await fetch(`${API_BASE}/api/admin/tenants`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "Failed to create tenant.");
+      }
+
+      setActionMessage(
+        `Tenant created successfully: ${
+          data.tenant?.display_name || data.tenant?.name || newTenant.business_name
+        }`
+      );
+
+      setShowNewTenantModal(false);
+      resetNewTenantForm();
+      await loadData();
+      setSection("tenants");
+
+      if (data.tenant?.id) {
+        await loadTenantDetail(data.tenant.id);
+      }
+    } catch (e: any) {
+      console.error(e);
+      setActionMessage(e.message || "Could not create tenant.");
+    } finally {
+      setSavingTenant(false);
+    }
+  }
+
+  function getTenantDashboardUrl(tenant: TenantRow) {
+    if (tenant.tenant_key) {
+      return `${APP_BASE}/dashboard?tenant_key=${encodeURIComponent(
+        tenant.tenant_key
+      )}`;
+    }
+    return `${APP_BASE}/dashboard`;
   }
 
   const navItems: {
@@ -448,7 +595,9 @@ export default function ConfluxaAdminPage() {
         open={showNewTenantModal}
         title="Add new tenant"
         description="Use this for onboarding new Confluxa clients."
-        onClose={() => setShowNewTenantModal(false)}
+        onClose={() => {
+          if (!savingTenant) setShowNewTenantModal(false);
+        }}
       >
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-2 md:col-span-2">
@@ -537,16 +686,199 @@ export default function ConfluxaAdminPage() {
             variant="outline"
             className="rounded-2xl"
             onClick={() => setShowNewTenantModal(false)}
+            disabled={savingTenant}
           >
             Cancel
           </Button>
           <Button
             className="rounded-2xl bg-slate-950 hover:bg-slate-800"
             onClick={saveNewTenant}
+            disabled={savingTenant}
           >
-            Save tenant
+            {savingTenant ? "Saving..." : "Save tenant"}
           </Button>
         </div>
+      </ModalShell>
+
+      <ModalShell
+        open={showTenantDetailModal}
+        title={
+          selectedTenantDetail?.tenant?.display_name ||
+          selectedTenantDetail?.tenant?.name ||
+          "Tenant detail"
+        }
+        description="Tenant profile, phone mapping, recipients, and current stats."
+        onClose={() => setShowTenantDetailModal(false)}
+      >
+        {loadingTenantDetail ? (
+          <div className="text-sm text-slate-500">Loading tenant detail...</div>
+        ) : !selectedTenantDetail?.ok ? (
+          <div className="text-sm text-red-600">
+            {selectedTenantDetail?.error || "Could not load tenant detail."}
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-3">
+              <Card className="rounded-2xl border-slate-200 shadow-none">
+                <CardContent className="p-4">
+                  <div className="text-sm text-slate-500">Calls</div>
+                  <div className="mt-2 text-2xl font-semibold text-slate-900">
+                    {selectedTenantDetail.stats?.calls ?? 0}
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="rounded-2xl border-slate-200 shadow-none">
+                <CardContent className="p-4">
+                  <div className="text-sm text-slate-500">Contacts</div>
+                  <div className="mt-2 text-2xl font-semibold text-slate-900">
+                    {selectedTenantDetail.stats?.contacts ?? 0}
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="rounded-2xl border-slate-200 shadow-none">
+                <CardContent className="p-4">
+                  <div className="text-sm text-slate-500">Integrations</div>
+                  <div className="mt-2 text-2xl font-semibold text-slate-900">
+                    {selectedTenantDetail.stats?.integrations ?? 0}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 p-4">
+              <div className="text-sm font-medium text-slate-900">
+                Tenant info
+              </div>
+              <div className="mt-3 grid gap-3 md:grid-cols-2 text-sm text-slate-600">
+                <div>
+                  <span className="font-medium text-slate-900">Tenant key:</span>{" "}
+                  {selectedTenantDetail.tenant?.tenant_key || "—"}
+                </div>
+                <div>
+                  <span className="font-medium text-slate-900">Status:</span>{" "}
+                  {selectedTenantDetail.tenant?.is_active ? "Active" : "Inactive"}
+                </div>
+                <div className="md:col-span-2">
+                  <span className="font-medium text-slate-900">Created:</span>{" "}
+                  {fmtTime(selectedTenantDetail.tenant?.created_at)}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-medium text-slate-900">
+                  Phone numbers
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {(selectedTenantDetail.phone_numbers || []).length === 0 ? (
+                  <div className="text-sm text-slate-500">
+                    No phone numbers assigned yet.
+                  </div>
+                ) : (
+                  selectedTenantDetail.phone_numbers?.map((phone) => (
+                    <div
+                      key={phone.id}
+                      className="rounded-2xl border border-slate-200 p-4"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <div className="font-medium text-slate-900">
+                            {phone.label || "Main"}
+                          </div>
+                          <div className="text-sm text-slate-500">
+                            {phone.phone_e164 || phone.phone_number || "—"}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          {phone.is_primary ? (
+                            <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">
+                              Primary
+                            </Badge>
+                          ) : null}
+                          <Badge className={statusTone(phone.is_active ? "active" : "inactive")}>
+                            {phone.is_active ? "Active" : "Inactive"}
+                          </Badge>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid gap-2 text-sm text-slate-600 md:grid-cols-2">
+                        <div>
+                          <span className="font-medium text-slate-900">
+                            Country:
+                          </span>{" "}
+                          {phone.country_code || "—"}
+                        </div>
+                        <div>
+                          <span className="font-medium text-slate-900">
+                            Delivery:
+                          </span>{" "}
+                          {phone.delivery_mode || "email"}
+                        </div>
+                        <div className="md:col-span-2">
+                          <span className="font-medium text-slate-900">
+                            Notification email:
+                          </span>{" "}
+                          {phone.notification_email || "—"}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 p-4">
+              <div className="text-sm font-medium text-slate-900">
+                Notification recipients
+              </div>
+
+              <div className="mt-4 space-y-2">
+                {(selectedTenantDetail.notification_recipients || []).length === 0 ? (
+                  <div className="text-sm text-slate-500">
+                    No notification recipients configured.
+                  </div>
+                ) : (
+                  selectedTenantDetail.notification_recipients?.map((recipient) => (
+                    <div
+                      key={recipient.id}
+                      className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3"
+                    >
+                      <div>
+                        <div className="font-medium text-slate-900">
+                          {recipient.email}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {recipient.notification_type}
+                        </div>
+                      </div>
+                      <Badge className={statusTone(recipient.is_active ? "active" : "inactive")}>
+                        {recipient.is_active ? "Active" : "Inactive"}
+                      </Badge>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap justify-end gap-3">
+              <a
+                href={`${APP_BASE}/dashboard?tenant_key=${encodeURIComponent(
+                  selectedTenantDetail.tenant?.tenant_key || ""
+                )}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <Button variant="outline" className="rounded-2xl">
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Open dashboard
+                </Button>
+              </a>
+            </div>
+          </div>
+        )}
       </ModalShell>
 
       <div className="grid min-h-screen lg:grid-cols-[280px_1fr]">
@@ -556,7 +888,9 @@ export default function ConfluxaAdminPage() {
               <div className="text-lg font-semibold text-slate-950">
                 Confluxa Agency OS
               </div>
-              <div className="text-xs text-slate-500">Internal admin console</div>
+              <div className="text-xs text-slate-500">
+                Internal admin console
+              </div>
             </div>
           </div>
 
@@ -639,7 +973,10 @@ export default function ConfluxaAdminPage() {
 
                   <button
                     onClick={() =>
-                      triggerAction("Open Twilio / phone mapping workflow next.", "system")
+                      triggerAction(
+                        "Open Twilio / phone mapping workflow next.",
+                        "system"
+                      )
                     }
                     className="flex w-full items-center justify-between rounded-2xl border border-slate-200 px-3 py-3 text-left text-sm hover:bg-slate-50"
                   >
@@ -665,7 +1002,10 @@ export default function ConfluxaAdminPage() {
 
                   <button
                     onClick={() =>
-                      triggerAction("Opening settings area for diagnostics and config.", "settings")
+                      triggerAction(
+                        "Opening settings area for diagnostics and config.",
+                        "settings"
+                      )
                     }
                     className="flex w-full items-center justify-between rounded-2xl border border-slate-200 px-3 py-3 text-left text-sm hover:bg-slate-50"
                   >
@@ -692,7 +1032,8 @@ export default function ConfluxaAdminPage() {
                   Confluxa Agency OS
                 </h1>
                 <p className="mt-1 text-sm text-slate-500">
-                  Run onboarding, delivery, tenant management, and growth from one console.
+                  Run onboarding, delivery, tenant management, and growth from one
+                  console.
                 </p>
               </div>
 
@@ -734,7 +1075,9 @@ export default function ConfluxaAdminPage() {
                   size="icon"
                   className="rounded-2xl border-slate-200"
                   onClick={() =>
-                    triggerAction("Notifications panel placeholder. Wire this later.")
+                    triggerAction(
+                      "Notifications panel placeholder. Wire this later."
+                    )
                   }
                 >
                   <Bell className="h-4 w-4" />
@@ -778,7 +1121,11 @@ export default function ConfluxaAdminPage() {
                   <MetricCard
                     title="Monthly recurring revenue"
                     value={`$${monthlyAgencyMrr.toLocaleString()}`}
-                    note={`${tenants.filter((t) => t.status.toLowerCase().includes("active")).length} active paying tenants`}
+                    note={`${
+                      tenants.filter((t) =>
+                        t.status.toLowerCase().includes("active")
+                      ).length
+                    } active paying tenants`}
                     icon={DollarSign}
                   />
                   <MetricCard
@@ -833,7 +1180,8 @@ export default function ConfluxaAdminPage() {
                     <CardHeader>
                       <CardTitle>Agency command center</CardTitle>
                       <CardDescription>
-                        The operator view for sales, onboarding, support, and retention.
+                        The operator view for sales, onboarding, support, and
+                        retention.
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="grid gap-4 md:grid-cols-2">
@@ -846,7 +1194,8 @@ export default function ConfluxaAdminPage() {
                           Tenant operations
                         </div>
                         <p className="mt-2 text-sm text-slate-500">
-                          View all tenants, their status, phone lines, and performance.
+                          View all tenants, their status, phone lines, and
+                          performance.
                         </p>
                       </button>
 
@@ -859,7 +1208,8 @@ export default function ConfluxaAdminPage() {
                           Delivery + reliability
                         </div>
                         <p className="mt-2 text-sm text-slate-500">
-                          Monitor webhook health, retries, summary delivery, and issues.
+                          Monitor webhook health, retries, summary delivery, and
+                          issues.
                         </p>
                       </button>
 
@@ -872,7 +1222,8 @@ export default function ConfluxaAdminPage() {
                           Call review
                         </div>
                         <p className="mt-2 text-sm text-slate-500">
-                          Search inbound activity across all tenants from one place.
+                          Search inbound activity across all tenants from one
+                          place.
                         </p>
                       </button>
 
@@ -885,7 +1236,8 @@ export default function ConfluxaAdminPage() {
                           Pipeline visibility
                         </div>
                         <p className="mt-2 text-sm text-slate-500">
-                          Track qualified leads, follow-ups, and proof for upsells.
+                          Track qualified leads, follow-ups, and proof for
+                          upsells.
                         </p>
                       </button>
                     </CardContent>
@@ -910,7 +1262,9 @@ export default function ConfluxaAdminPage() {
                             </div>
                             <div>
                               <div className="font-medium">{item.label}</div>
-                              <div className="text-sm text-slate-500">Last 24 hours</div>
+                              <div className="text-sm text-slate-500">
+                                Last 24 hours
+                              </div>
                             </div>
                           </div>
                           <Badge className={item.tone}>{item.value}</Badge>
@@ -998,7 +1352,10 @@ export default function ConfluxaAdminPage() {
                   <TabsContent value="leads">
                     <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
                       {filteredLeads.map((lead) => (
-                        <Card key={lead.id} className="rounded-3xl border-slate-200 shadow-sm">
+                        <Card
+                          key={lead.id}
+                          className="rounded-3xl border-slate-200 shadow-sm"
+                        >
                           <CardContent className="p-5">
                             <div className="flex items-start justify-between gap-3">
                               <div>
@@ -1029,7 +1386,8 @@ export default function ConfluxaAdminPage() {
                       <CardHeader>
                         <CardTitle>Tenant accounts</CardTitle>
                         <CardDescription>
-                          Use this for pricing, support, onboarding, and reviews.
+                          Use this for pricing, support, onboarding, and
+                          reviews.
                         </CardDescription>
                       </CardHeader>
                       <CardContent>
@@ -1042,6 +1400,7 @@ export default function ConfluxaAdminPage() {
                               <TableHead>Calls</TableHead>
                               <TableHead>Booked</TableHead>
                               <TableHead>Recovered</TableHead>
+                              <TableHead>Actions</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -1059,6 +1418,33 @@ export default function ConfluxaAdminPage() {
                                 <TableCell>{tenant.calls}</TableCell>
                                 <TableCell>{tenant.booked}</TableCell>
                                 <TableCell>{tenant.recovered}</TableCell>
+                                <TableCell>
+                                  <div className="flex gap-2">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="rounded-2xl"
+                                      onClick={() => loadTenantDetail(tenant.id)}
+                                    >
+                                      <Eye className="mr-2 h-4 w-4" />
+                                      View
+                                    </Button>
+                                    <a
+                                      href={getTenantDashboardUrl(tenant)}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="rounded-2xl"
+                                      >
+                                        <ExternalLink className="mr-2 h-4 w-4" />
+                                        Dashboard
+                                      </Button>
+                                    </a>
+                                  </div>
+                                </TableCell>
                               </TableRow>
                             ))}
                           </TableBody>
@@ -1071,7 +1457,11 @@ export default function ConfluxaAdminPage() {
             )}
 
             {section === "tenants" && (
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-6"
+              >
                 <SectionHeader
                   title="Tenant management"
                   description="Manage all client accounts, status, numbers, and performance."
@@ -1097,12 +1487,15 @@ export default function ConfluxaAdminPage() {
                           <TableHead>Calls</TableHead>
                           <TableHead>Booked</TableHead>
                           <TableHead>Recovered</TableHead>
+                          <TableHead>Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {filteredTenants.map((tenant) => (
                           <TableRow key={tenant.id}>
-                            <TableCell className="font-medium">{tenant.name}</TableCell>
+                            <TableCell className="font-medium">
+                              {tenant.name}
+                            </TableCell>
                             <TableCell>{tenant.phone_number}</TableCell>
                             <TableCell>
                               <Badge className={statusTone(tenant.status)}>
@@ -1112,6 +1505,33 @@ export default function ConfluxaAdminPage() {
                             <TableCell>{tenant.calls}</TableCell>
                             <TableCell>{tenant.booked}</TableCell>
                             <TableCell>{tenant.recovered}</TableCell>
+                            <TableCell>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="rounded-2xl"
+                                  onClick={() => loadTenantDetail(tenant.id)}
+                                >
+                                  <Eye className="mr-2 h-4 w-4" />
+                                  View
+                                </Button>
+                                <a
+                                  href={getTenantDashboardUrl(tenant)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="rounded-2xl"
+                                  >
+                                    <ExternalLink className="mr-2 h-4 w-4" />
+                                    Dashboard
+                                  </Button>
+                                </a>
+                              </div>
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -1122,7 +1542,11 @@ export default function ConfluxaAdminPage() {
             )}
 
             {section === "calls" && (
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-6"
+              >
                 <SectionHeader
                   title="Call operations"
                   description="Search and review all inbound call activity across the platform."
@@ -1132,7 +1556,9 @@ export default function ConfluxaAdminPage() {
                         variant="outline"
                         className="rounded-2xl"
                         onClick={() =>
-                          triggerAction("Filter drawer placeholder. Add advanced filters next.")
+                          triggerAction(
+                            "Filter drawer placeholder. Add advanced filters next."
+                          )
                         }
                       >
                         Filter
@@ -1140,7 +1566,9 @@ export default function ConfluxaAdminPage() {
                       <Button
                         className="rounded-2xl bg-slate-950 hover:bg-slate-800"
                         onClick={() =>
-                          triggerAction("Export placeholder. Next step: CSV download.")
+                          triggerAction(
+                            "Export placeholder. Next step: CSV download."
+                          )
                         }
                       >
                         Export
@@ -1165,8 +1593,12 @@ export default function ConfluxaAdminPage() {
                         {filteredCalls.map((row) => (
                           <TableRow key={row.id}>
                             <TableCell>
-                              <div className="font-medium">{row.caller_name || "Unknown Caller"}</div>
-                              <div className="text-xs text-slate-500">{row.caller_phone || "—"}</div>
+                              <div className="font-medium">
+                                {row.caller_name || "Unknown Caller"}
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                {row.caller_phone || "—"}
+                              </div>
                             </TableCell>
                             <TableCell>{row.tenant_name}</TableCell>
                             <TableCell>{fmtTime(row.time)}</TableCell>
@@ -1188,7 +1620,11 @@ export default function ConfluxaAdminPage() {
             )}
 
             {section === "leads" && (
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-6"
+              >
                 <SectionHeader
                   title="Lead pipeline"
                   description="All captured leads and their next action across tenants."
@@ -1196,12 +1632,17 @@ export default function ConfluxaAdminPage() {
 
                 <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
                   {filteredLeads.map((lead) => (
-                    <Card key={lead.id} className="rounded-3xl border-slate-200 shadow-sm">
+                    <Card
+                      key={lead.id}
+                      className="rounded-3xl border-slate-200 shadow-sm"
+                    >
                       <CardContent className="p-5">
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <div className="font-medium">{lead.name}</div>
-                            <div className="text-sm text-slate-500">{lead.business}</div>
+                            <div className="text-sm text-slate-500">
+                              {lead.business}
+                            </div>
                           </div>
                           <Badge className={statusTone(lead.status)}>
                             {lead.status}
@@ -1222,7 +1663,11 @@ export default function ConfluxaAdminPage() {
             )}
 
             {section === "system" && (
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-6"
+              >
                 <SectionHeader
                   title="System + delivery"
                   description="Monitor platform reliability, mapping, notifications, and backend health."
@@ -1240,7 +1685,9 @@ export default function ConfluxaAdminPage() {
                       <div className="flex items-center justify-between rounded-2xl border border-slate-200 p-4">
                         <div>
                           <div className="font-medium">Voice routing</div>
-                          <div className="text-sm text-slate-500">Phone and assistant flow</div>
+                          <div className="text-sm text-slate-500">
+                            Phone and assistant flow
+                          </div>
                         </div>
                         <Badge className={statusTone(health?.voice_routing)}>
                           {health?.voice_routing || "—"}
@@ -1250,7 +1697,9 @@ export default function ConfluxaAdminPage() {
                       <div className="flex items-center justify-between rounded-2xl border border-slate-200 p-4">
                         <div>
                           <div className="font-medium">Webhook health</div>
-                          <div className="text-sm text-slate-500">Inbound event processing</div>
+                          <div className="text-sm text-slate-500">
+                            Inbound event processing
+                          </div>
                         </div>
                         <Badge className={statusTone(health?.webhook_health)}>
                           {health?.webhook_health || "—"}
@@ -1260,7 +1709,9 @@ export default function ConfluxaAdminPage() {
                       <div className="flex items-center justify-between rounded-2xl border border-slate-200 p-4">
                         <div>
                           <div className="font-medium">Email delivery</div>
-                          <div className="text-sm text-slate-500">Summary delivery status</div>
+                          <div className="text-sm text-slate-500">
+                            Summary delivery status
+                          </div>
                         </div>
                         <Badge className={statusTone(health?.email_delivery)}>
                           {health?.email_delivery || "—"}
@@ -1286,7 +1737,11 @@ export default function ConfluxaAdminPage() {
                       ].map(([label, Icon]: any) => (
                         <button
                           key={label}
-                          onClick={() => triggerAction(`${label} clicked. Wire endpoint or route next.`)}
+                          onClick={() =>
+                            triggerAction(
+                              `${label} clicked. Wire endpoint or route next.`
+                            )
+                          }
                           className="flex w-full items-center justify-between rounded-2xl border border-slate-200 p-4 text-left hover:bg-slate-50"
                         >
                           <div className="flex items-center gap-3">
@@ -1305,7 +1760,11 @@ export default function ConfluxaAdminPage() {
             )}
 
             {section === "settings" && (
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-6"
+              >
                 <SectionHeader
                   title="Agency settings"
                   description="Internal configuration and next-step wiring points."
@@ -1328,10 +1787,18 @@ export default function ConfluxaAdminPage() {
                       </div>
 
                       <div className="rounded-2xl border border-slate-200 p-4">
+                        <div className="text-sm font-medium">App base URL</div>
+                        <div className="mt-1 break-all text-sm text-slate-500">
+                          {APP_BASE}
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-200 p-4">
                         <div className="text-sm font-medium">Next steps</div>
                         <ul className="mt-2 space-y-2 text-sm text-slate-500">
-                          <li>Wire New Tenant modal to POST /api/tenants</li>
-                          <li>Add tenant detail route</li>
+                          <li>Tenant creation is now wired to admin API</li>
+                          <li>Tenant detail modal is live</li>
+                          <li>Tenant dashboard deep links are live</li>
                           <li>Add CSV export for calls/leads</li>
                           <li>Add billing/MRR endpoint</li>
                         </ul>
@@ -1343,7 +1810,8 @@ export default function ConfluxaAdminPage() {
                     <CardHeader>
                       <CardTitle>Admin notes</CardTitle>
                       <CardDescription>
-                        Use this page as the agency operating layer, not the client view.
+                        Use this page as the agency operating layer, not the
+                        client view.
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4 text-sm text-slate-500">
@@ -1351,10 +1819,12 @@ export default function ConfluxaAdminPage() {
                         Client dashboard answers: “How is one business doing?”
                       </p>
                       <p>
-                        Agency admin answers: “What needs action across all tenants, revenue, delivery, and onboarding?”
+                        Agency admin answers: “What needs action across all
+                        tenants, revenue, delivery, and onboarding?”
                       </p>
                       <p>
-                        That is why this page uses operator language, action buttons, and cross-tenant visibility.
+                        That is why this page uses operator language, action
+                        buttons, and cross-tenant visibility.
                       </p>
                     </CardContent>
                   </Card>

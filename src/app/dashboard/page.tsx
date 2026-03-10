@@ -16,13 +16,13 @@ import {
   PhoneCall,
   Headphones,
   Briefcase,
-  Wifi,
   BarChart3,
   ClipboardList,
   BadgeCheck,
   Clock3,
   Filter,
   Plus,
+  ExternalLink,
 } from "lucide-react";
 import {
   Card,
@@ -136,6 +136,10 @@ type SystemHealth = {
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
   "https://confluxa-core.onrender.com";
+
+const ADMIN_BASE_URL =
+  process.env.NEXT_PUBLIC_ADMIN_BASE_URL?.replace(/\/+$/, "") ||
+  "https://app.getconfluxa.com/admin";
 
 const fallbackSummary: DashboardSummary = {
   calls_today: 42,
@@ -300,7 +304,9 @@ const fallbackHealth: SystemHealth = {
 function toneForFailure(label: string, value: number) {
   const lower = label.toLowerCase();
   if (value === 0) return "bg-emerald-100 text-emerald-900";
-  if (lower.includes("retry") || lower.includes("mapping")) return "bg-amber-100 text-amber-900";
+  if (lower.includes("retry") || lower.includes("mapping")) {
+    return "bg-amber-100 text-amber-900";
+  }
   return "bg-red-100 text-red-900";
 }
 
@@ -386,6 +392,20 @@ export default function ConfluxaFrontendPrototype() {
   const [clients, setClients] = useState<ClientRow[]>(fallbackClients);
   const [health, setHealth] = useState<SystemHealth>(fallbackHealth);
 
+  const tenantKeyFromUrl =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("tenant_key")
+      : null;
+
+  const tenantScopedQuery = tenantKeyFromUrl
+    ? `tenant_key=${encodeURIComponent(tenantKeyFromUrl)}`
+    : "";
+
+  function withTenantScope(path: string, extraQuery = "") {
+    const params = [tenantScopedQuery, extraQuery].filter(Boolean).join("&");
+    return `${API_BASE_URL}${path}${params ? `?${params}` : ""}`;
+  }
+
   useEffect(() => {
     let active = true;
 
@@ -395,22 +415,22 @@ export default function ConfluxaFrontendPrototype() {
 
       try {
         const endpoints = [
-          fetch(`${API_BASE_URL}/api/dashboard/summary`).then((r) =>
+          fetch(withTenantScope("/api/dashboard/summary")).then((r) =>
             r.ok ? r.json() : Promise.reject(new Error("Failed summary"))
           ),
-          fetch(`${API_BASE_URL}/api/dashboard/call-trend`).then((r) =>
+          fetch(withTenantScope("/api/dashboard/call-trend")).then((r) =>
             r.ok ? r.json() : Promise.reject(new Error("Failed call trend"))
           ),
-          fetch(`${API_BASE_URL}/api/calls?limit=20`).then((r) =>
+          fetch(withTenantScope("/api/calls", "limit=20")).then((r) =>
             r.ok ? r.json() : Promise.reject(new Error("Failed calls"))
           ),
-          fetch(`${API_BASE_URL}/api/leads?limit=20`).then((r) =>
+          fetch(withTenantScope("/api/leads", "limit=20")).then((r) =>
             r.ok ? r.json() : Promise.reject(new Error("Failed leads"))
           ),
-          fetch(`${API_BASE_URL}/api/tenants`).then((r) =>
+          fetch(withTenantScope("/api/tenants")).then((r) =>
             r.ok ? r.json() : Promise.reject(new Error("Failed tenants"))
           ),
-          fetch(`${API_BASE_URL}/api/system/health`).then((r) =>
+          fetch(withTenantScope("/api/system/health")).then((r) =>
             r.ok ? r.json() : Promise.reject(new Error("Failed health"))
           ),
         ];
@@ -467,7 +487,11 @@ export default function ConfluxaFrontendPrototype() {
         setRecentCalls(
           Array.isArray(callsRes) && callsRes.length
             ? callsRes.map((item: any) => ({
-                id: String(item.id ?? item.call_id ?? crypto.randomUUID()),
+                id: String(
+                  item.id ??
+                    item.call_id ??
+                    `${Date.now()}-${Math.random().toString(36).slice(2)}`
+                ),
                 caller: String(
                   item.caller ??
                     item.caller_name ??
@@ -492,10 +516,15 @@ export default function ConfluxaFrontendPrototype() {
         setLeads(
           Array.isArray(leadsRes) && leadsRes.length
             ? leadsRes.map((item: any) => ({
-                id: String(item.id ?? crypto.randomUUID()),
+                id: String(
+                  item.id ??
+                    `${Date.now()}-${Math.random().toString(36).slice(2)}`
+                ),
                 name: String(
                   item.name ??
-                    [item.first_name, item.last_name].filter(Boolean).join(" ") ??
+                    [item.first_name, item.last_name]
+                      .filter(Boolean)
+                      .join(" ") ??
                     "Unknown Lead"
                 ),
                 niche: String(item.niche ?? item.industry ?? "General"),
@@ -513,15 +542,14 @@ export default function ConfluxaFrontendPrototype() {
         setClients(
           Array.isArray(tenantsRes) && tenantsRes.length
             ? tenantsRes.map((item: any) => ({
-                id: String(item.id ?? crypto.randomUUID()),
+                id: String(item.id ?? `tenant-${Math.random().toString(36).slice(2)}`),
                 name: String(item.name ?? item.display_name ?? "Unknown client"),
                 phone: String(
-                  item.phone ??
-                    item.phone_number ??
-                    item.primary_phone ??
-                    "No number"
+                  item.phone ?? item.phone_number ?? item.primary_phone ?? "No number"
                 ),
-                status: String(item.status ?? (item.is_active ? "Active" : "Inactive")),
+                status: String(
+                  item.status ?? (item.is_active ? "Active" : "Inactive")
+                ),
                 calls: Number(item.calls ?? 0),
                 booked: Number(item.booked ?? 0),
                 recovered: Number(item.recovered ?? 0),
@@ -548,11 +576,16 @@ export default function ConfluxaFrontendPrototype() {
                   label: String(item.label ?? "Unknown issue"),
                   value: Number(item.value ?? 0),
                   tone: String(
-                    item.tone ?? toneForFailure(String(item.label ?? ""), Number(item.value ?? 0))
+                    item.tone ??
+                      toneForFailure(
+                        String(item.label ?? ""),
+                        Number(item.value ?? 0)
+                      )
                   ),
                 }))
               : fallbackHealth.failures,
-          onboarding_progress: healthRes.onboarding_progress ?? fallbackHealth.onboarding_progress,
+          onboarding_progress:
+            healthRes.onboarding_progress ?? fallbackHealth.onboarding_progress,
         });
       } catch (err) {
         if (!active) return;
@@ -570,7 +603,7 @@ export default function ConfluxaFrontendPrototype() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [tenantKeyFromUrl]);
 
   const filteredCalls = useMemo(() => {
     return recentCalls.filter((c) => {
@@ -578,6 +611,7 @@ export default function ConfluxaFrontendPrototype() {
         tenant === "all" ||
         c.tenant_id === tenant ||
         c.tenant.toLowerCase() === tenant.toLowerCase();
+
       const q = search.toLowerCase();
       const matchesSearch =
         !q ||
@@ -611,7 +645,9 @@ export default function ConfluxaFrontendPrototype() {
 
   const visibleClients = useMemo(() => {
     if (tenant === "all") return clients;
-    return clients.filter((client) => client.id === tenant || client.name === tenant);
+    return clients.filter(
+      (client) => client.id === tenant || client.name === tenant
+    );
   }, [clients, tenant]);
 
   const summaryCards = [
@@ -740,6 +776,7 @@ export default function ConfluxaFrontendPrototype() {
                     placeholder="Search calls, tenants, leads"
                   />
                 </div>
+
                 <Select value={tenant} onValueChange={setTenant}>
                   <SelectTrigger className="w-[220px] rounded-2xl border-slate-200">
                     <SelectValue placeholder="Tenant" />
@@ -753,10 +790,15 @@ export default function ConfluxaFrontendPrototype() {
                     ))}
                   </SelectContent>
                 </Select>
-                <Button className="rounded-2xl bg-slate-900 hover:bg-slate-800">
+
+                <Button
+                  className="rounded-2xl bg-slate-900 hover:bg-slate-800"
+                  onClick={() => window.open(ADMIN_BASE_URL, "_blank")}
+                >
                   <Plus className="mr-2 h-4 w-4" />
                   New client
                 </Button>
+
                 <Button
                   variant="outline"
                   size="icon"
@@ -764,6 +806,7 @@ export default function ConfluxaFrontendPrototype() {
                 >
                   <Bell className="h-4 w-4" />
                 </Button>
+
                 <Avatar className="h-10 w-10 rounded-2xl">
                   <AvatarFallback className="rounded-2xl bg-orange-100 text-orange-900">
                     EE
@@ -899,6 +942,7 @@ export default function ConfluxaFrontendPrototype() {
                           <Button
                             variant="outline"
                             className="rounded-2xl border-slate-200"
+                            onClick={() => setPage("calls")}
                           >
                             View all
                           </Button>
@@ -1171,88 +1215,72 @@ export default function ConfluxaFrontendPrototype() {
               </motion.div>
             )}
 
-                        {page === "settings" && (
+            {page === "settings" && (
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="space-y-6"
               >
                 <SectionTitle
-                  title="Settings / Admin"
-                  description="Onboard clients, map phone numbers, and monitor integrations."
+                  title="Settings"
+                  description="Workspace settings, diagnostics, and admin access."
                 />
                 <div className="grid gap-6 xl:grid-cols-[1.1fr_1fr]">
                   <Card className="rounded-3xl border-slate-200/80 shadow-sm">
                     <CardHeader>
-                      <CardTitle>New client onboarding</CardTitle>
+                      <CardTitle>Workspace access</CardTitle>
                       <CardDescription>
-                        Turn SQL steps into a clean self-serve workflow.
+                        This dashboard is for monitoring performance. Client onboarding lives in Admin.
                       </CardDescription>
                     </CardHeader>
-                    <CardContent className="grid gap-4 md:grid-cols-2">
-                      <div className="space-y-2 md:col-span-2">
-                        <label className="text-sm font-medium">Business name</label>
-                        <Input
-                          className="rounded-2xl"
-                          placeholder="Innovative Mechanical, LLC"
-                        />
+                    <CardContent className="space-y-4">
+                      <div className="rounded-2xl bg-slate-100 p-4 text-sm text-slate-600">
+                        {tenantKeyFromUrl ? (
+                          <div className="space-y-2">
+                            <div className="font-medium text-slate-900">
+                              Tenant-scoped dashboard
+                            </div>
+                            <div>
+                              Current tenant key:{" "}
+                              <span className="font-medium">{tenantKeyFromUrl}</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <div className="font-medium text-slate-900">
+                              Agency-wide demo view
+                            </div>
+                            <div>
+                              Add <span className="font-medium">?tenant_key=your-tenant-key</span>{" "}
+                              to the URL to scope this dashboard to one client.
+                            </div>
+                          </div>
+                        )}
                       </div>
 
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">
-                          Notification email
-                        </label>
-                        <Input
-                          className="rounded-2xl"
-                          placeholder="owner@business.com"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Phone number</label>
-                        <Input
-                          className="rounded-2xl"
-                          placeholder="+1 281 299 3921"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Industry</label>
-                        <Select defaultValue="hvac">
-                          <SelectTrigger className="rounded-2xl">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="hvac">HVAC</SelectItem>
-                            <SelectItem value="legal">Legal</SelectItem>
-                            <SelectItem value="medspa">Medspa</SelectItem>
-                            <SelectItem value="education">Education</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Delivery mode</label>
-                        <Select defaultValue="email">
-                          <SelectTrigger className="rounded-2xl">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="email">Email</SelectItem>
-                            <SelectItem value="sms">SMS</SelectItem>
-                            <SelectItem value="crm">CRM push</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="md:col-span-2 flex items-center justify-between rounded-2xl bg-slate-100 p-4 text-sm text-slate-600">
-                        <div className="flex items-center gap-2">
-                          <Wifi className="h-4 w-4" />
-                          This form should post to /api/tenants and create tenant, number,
-                          and notification rows.
+                      <div className="rounded-2xl border border-slate-200 p-4">
+                        <div className="text-sm font-medium text-slate-900">
+                          Backend API
                         </div>
-                        <Button className="rounded-2xl bg-slate-900 hover:bg-slate-800">
-                          Save client
+                        <div className="mt-1 break-all text-sm text-slate-500">
+                          {API_BASE_URL}
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3">
+                        <Button
+                          className="rounded-2xl bg-slate-900 hover:bg-slate-800"
+                          onClick={() => window.open(ADMIN_BASE_URL, "_blank")}
+                        >
+                          <ExternalLink className="mr-2 h-4 w-4" />
+                          Open Admin
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="rounded-2xl border-slate-200"
+                        >
+                          <CheckCircle2 className="mr-2 h-4 w-4" />
+                          Run diagnostics
                         </Button>
                       </div>
                     </CardContent>
