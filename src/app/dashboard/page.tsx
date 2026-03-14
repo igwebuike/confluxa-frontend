@@ -24,6 +24,7 @@ import {
   Plus,
   ExternalLink,
 } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 import {
   Card,
   CardContent,
@@ -391,6 +392,11 @@ export default function ConfluxaFrontendPrototype() {
   const [leads, setLeads] = useState<LeadRow[]>(fallbackLeads);
   const [clients, setClients] = useState<ClientRow[]>(fallbackClients);
   const [health, setHealth] = useState<SystemHealth>(fallbackHealth);
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    window.location.replace("/login");
+  }
 
   const tenantKeyFromUrl =
     typeof window !== "undefined"
@@ -807,11 +813,21 @@ export default function ConfluxaFrontendPrototype() {
                   <Bell className="h-4 w-4" />
                 </Button>
 
-                <Avatar className="h-10 w-10 rounded-2xl">
-                  <AvatarFallback className="rounded-2xl bg-orange-100 text-orange-900">
-                    EE
-                  </AvatarFallback>
-                </Avatar>
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant="outline"
+                    className="rounded-2xl border-slate-200"
+                    onClick={handleLogout}
+                  >
+                    Logout
+                  </Button>
+
+                  <Avatar className="h-10 w-10 rounded-2xl">
+                    <AvatarFallback className="rounded-2xl bg-orange-100 text-orange-900">
+                      EE
+                    </AvatarFallback>
+                  </Avatar>
+                </div>
               </div>
             </div>
           </header>

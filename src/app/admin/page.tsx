@@ -29,6 +29,7 @@ import {
   ExternalLink,
   Eye,
 } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 import {
   Card,
@@ -358,6 +359,11 @@ export default function ConfluxaAdminPage() {
     industry: "hvac",
     delivery_mode: "email",
   });
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    window.location.replace("/login");
+  }
 
   async function loadData() {
     setLoading(true);
@@ -749,7 +755,7 @@ export default function ConfluxaAdminPage() {
               <div className="text-sm font-medium text-slate-900">
                 Tenant info
               </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-2 text-sm text-slate-600">
+              <div className="mt-3 grid gap-3 text-sm text-slate-600 md:grid-cols-2">
                 <div>
                   <span className="font-medium text-slate-900">Tenant key:</span>{" "}
                   {selectedTenantDetail.tenant?.tenant_key || "—"}
@@ -794,11 +800,15 @@ export default function ConfluxaAdminPage() {
                         </div>
                         <div className="flex gap-2">
                           {phone.is_primary ? (
-                            <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">
+                            <Badge className="border-emerald-200 bg-emerald-100 text-emerald-800">
                               Primary
                             </Badge>
                           ) : null}
-                          <Badge className={statusTone(phone.is_active ? "active" : "inactive")}>
+                          <Badge
+                            className={statusTone(
+                              phone.is_active ? "active" : "inactive"
+                            )}
+                          >
                             {phone.is_active ? "Active" : "Inactive"}
                           </Badge>
                         </div>
@@ -836,29 +846,36 @@ export default function ConfluxaAdminPage() {
               </div>
 
               <div className="mt-4 space-y-2">
-                {(selectedTenantDetail.notification_recipients || []).length === 0 ? (
+                {(selectedTenantDetail.notification_recipients || []).length ===
+                0 ? (
                   <div className="text-sm text-slate-500">
                     No notification recipients configured.
                   </div>
                 ) : (
-                  selectedTenantDetail.notification_recipients?.map((recipient) => (
-                    <div
-                      key={recipient.id}
-                      className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3"
-                    >
-                      <div>
-                        <div className="font-medium text-slate-900">
-                          {recipient.email}
+                  selectedTenantDetail.notification_recipients?.map(
+                    (recipient) => (
+                      <div
+                        key={recipient.id}
+                        className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3"
+                      >
+                        <div>
+                          <div className="font-medium text-slate-900">
+                            {recipient.email}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {recipient.notification_type}
+                          </div>
                         </div>
-                        <div className="text-xs text-slate-500">
-                          {recipient.notification_type}
-                        </div>
+                        <Badge
+                          className={statusTone(
+                            recipient.is_active ? "active" : "inactive"
+                          )}
+                        >
+                          {recipient.is_active ? "Active" : "Inactive"}
+                        </Badge>
                       </div>
-                      <Badge className={statusTone(recipient.is_active ? "active" : "inactive")}>
-                        {recipient.is_active ? "Active" : "Inactive"}
-                      </Badge>
-                    </div>
-                  ))
+                    )
+                  )
                 )}
               </div>
             </div>
@@ -1083,11 +1100,21 @@ export default function ConfluxaAdminPage() {
                   <Bell className="h-4 w-4" />
                 </Button>
 
-                <Avatar className="h-10 w-10 rounded-2xl">
-                  <AvatarFallback className="rounded-2xl bg-orange-100 text-orange-900">
-                    EE
-                  </AvatarFallback>
-                </Avatar>
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant="outline"
+                    className="rounded-2xl border-slate-200"
+                    onClick={handleLogout}
+                  >
+                    Logout
+                  </Button>
+
+                  <Avatar className="h-10 w-10 rounded-2xl">
+                    <AvatarFallback className="rounded-2xl bg-orange-100 text-orange-900">
+                      EE
+                    </AvatarFallback>
+                  </Avatar>
+                </div>
               </div>
             </div>
           </header>

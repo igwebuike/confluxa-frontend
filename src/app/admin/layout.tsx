@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-export default function DashboardLayout({
+export default function AdminLayout({
   children,
 }: {
   children: React.ReactNode;
@@ -21,6 +21,13 @@ export default function DashboardLayout({
         return;
       }
 
+      const role = user.user_metadata?.role;
+
+      if (role !== "admin") {
+        window.location.replace("/dashboard");
+        return;
+      }
+
       setStatus("allowed");
     }
 
@@ -28,7 +35,7 @@ export default function DashboardLayout({
   }, []);
 
   if (status === "checking") {
-    return <div style={{ padding: "40px" }}>Checking dashboard access...</div>;
+    return <div style={{ padding: "40px" }}>Checking admin access...</div>;
   }
 
   return <>{children}</>;
