@@ -1,5 +1,7 @@
 "use client";
-
+import CallTranscriptModal, {
+  type CallTranscriptDetail,
+} from "@/components/CallTranscriptModal";
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
@@ -23,6 +25,7 @@ import {
   Filter,
   Plus,
   ExternalLink,
+  Eye,
   X,
   RefreshCcw,
   Download,
@@ -590,18 +593,42 @@ export default function ConfluxaFrontendPrototype() {
   const [clients, setClients] = useState<ClientRow[]>(fallbackClients);
   const [health, setHealth] = useState<SystemHealth>(fallbackHealth);
   const [analytics, setAnalytics] = useState<AnalyticsBucket[]>(fallbackAnalytics);
-  const [conversionFunnel, setConversionFunnel] =
-    useState<ConversionFunnel>(fallbackConversionFunnel);
+  const [conversionFunnel, setConversionFunnel] = useState<ConversionFunnel>(fallbackConversionFunnel);
 
   const [selectedCall, setSelectedCall] = useState<CallDetail | null>(null);
   const [showCallModal, setShowCallModal] = useState(false);
   const [loadingCallDetail, setLoadingCallDetail] = useState(false);
+  const [showTranscriptModal, setShowTranscriptModal] = useState(false);
+  const [loadingTranscript, setLoadingTranscript] = useState(false);
+  const [selectedCallDetail, setSelectedCallDetail] = useState<CallTranscriptDetail | null>(null);
 
   async function handleLogout() {
     await supabase.auth.signOut();
     window.location.replace("/login");
   }
+  async function openCallTranscript(callId: string) {
+    if (!callId) return;
 
+    setShowTranscriptModal(true);
+    setLoadingTranscript(true);
+    setSelectedCallDetail(null);
+
+    try {
+      const res = await fetch(withTenantScope(`/api/calls/${callId}`));
+      const data = await res.json();
+
+      if (!res.ok || !data.ok || !data.call) {
+        throw new Error(data.detail || data.error || "Failed to load call detail.");
+      }
+
+      setSelectedCallDetail(data.call);
+    } catch (err) {
+      console.error(err);
+      setSelectedCallDetail(null);
+    } finally {
+      setLoadingTranscript(false);
+    }
+  }
   const tenantKeyFromUrl =
     typeof window !== "undefined"
       ? new URLSearchParams(window.location.search).get("tenant_key")
@@ -1614,9 +1641,9 @@ export default function ConfluxaFrontendPrototype() {
                               <Button
                                 variant="outline"
                                 className="rounded-2xl border-slate-200"
-                                onClick={() => openCallDetail(call.id)}
-                                disabled={loadingCallDetail}
+								onClick={() => openCallTranscript(call.id)}
                               >
+							    <Eye className="mr-2 h-4 w-4" />
                                 Open
                               </Button>
                             </TableCell>

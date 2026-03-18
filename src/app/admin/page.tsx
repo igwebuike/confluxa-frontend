@@ -1,5 +1,7 @@
 "use client";
-
+import CallTranscriptModal, {
+  type CallTranscriptDetail,
+} from "@/components/CallTranscriptModal";
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
@@ -414,7 +416,9 @@ export default function ConfluxaAdminPage() {
   const [selectedTenantId, setSelectedTenantId] = useState<string>("");
   const [selectedTenantDetail, setSelectedTenantDetail] =
     useState<TenantDetail | null>(null);
-
+  const [showTranscriptModal, setShowTranscriptModal] = useState(false);
+  const [loadingTranscript, setLoadingTranscript] = useState(false);
+  const [selectedCallDetail, setSelectedCallDetail] =useState<CallTranscriptDetail | null>(null);
   const [newTenant, setNewTenant] = useState({
     business_name: "",
     notification_email: "",
@@ -709,7 +713,49 @@ export default function ConfluxaAdminPage() {
       setLoadingTenantDetail(false);
     }
   }
+  async function openCallTranscript(callId: string, tenantName?: string) {
+    if (!callId) return;
 
+    setShowTranscriptModal(true);
+    setLoadingTranscript(true);
+    setSelectedCallDetail(null);
+
+    try {
+      let tenantKey = "";
+
+      const matchedTenant = tenants.find(
+        (t) => t.name?.toLowerCase() === (tenantName || "").toLowerCase()
+      );
+      if (matchedTenant?.tenant_key) {
+        tenantKey = matchedTenant.tenant_key;
+      }
+
+      const url = tenantKey
+        ? `${API_BASE}/api/calls/${callId}?tenant_key=${encodeURIComponent(tenantKey)}`
+        : `${API_BASE}/api/calls/${callId}`;
+
+      const res = await fetch(url, {
+        headers: {
+          "X-Admin-Secret":
+            process.env.NEXT_PUBLIC_ADMIN_SECRET || "",
+        },
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.ok || !data.call) {
+        throw new Error(data.detail || data.error || "Failed to load call detail.");
+      }
+
+      setSelectedCallDetail(data.call);
+    } catch (e) {
+      console.error(e);
+      setSelectedCallDetail(null);
+      setActionMessage("Could not load transcript viewer.");
+    } finally {
+      setLoadingTranscript(false);
+    }
+  }
   async function saveNewTenant() {
     if (!newTenant.business_name.trim()) {
       setActionMessage("Enter a business name first.");
@@ -1775,6 +1821,7 @@ export default function ConfluxaAdminPage() {
                               <TableHead>Time</TableHead>
                               <TableHead>Outcome</TableHead>
                               <TableHead>Summary</TableHead>
+							  <TableHead>Action</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
