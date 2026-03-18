@@ -28,6 +28,8 @@ import {
   ChevronRight,
   ExternalLink,
   Eye,
+  BarChart3,
+  TrendingUp,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
@@ -64,6 +66,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  ResponsiveContainer,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip,
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+} from "recharts";
 
 type Summary = {
   calls_today: number;
@@ -181,6 +194,27 @@ type AdminSection =
   | "system"
   | "settings";
 
+type AnalyticsWindow = "7" | "30" | "90";
+
+type TrendPoint = {
+  day: string;
+  label: string;
+  calls: number;
+  booked: number;
+  recovered: number;
+};
+
+type TenantAnalyticsRow = {
+  id: string;
+  name: string;
+  status: string;
+  calls: number;
+  booked: number;
+  recovered: number;
+  bookRate: number;
+  recoveryRate: number;
+};
+
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
   "https://confluxa-core.onrender.com";
@@ -190,7 +224,9 @@ const APP_BASE =
   "https://app.getconfluxa.com";
 
 const ADMIN_SECRET =
-  process.env.NEXT_PUBLIC_ADMIN_SECRET?.trim() || "";
+  process.env.NEXT_PUBLIC_ADMIN_SECRET?.trim() ||
+  process.env.ADMIN_SECRET?.trim() ||
+  "";
 
 const emptySummary: Summary = {
   calls_today: 0,
@@ -238,6 +274,24 @@ function statusTone(status?: string) {
     return "bg-red-100 text-red-800 border-red-200";
   }
   return "bg-slate-100 text-slate-700 border-slate-200";
+}
+
+function shortDayLabel(date: Date) {
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function isBookedOutcome(outcome?: string) {
+  return (outcome || "").toLowerCase().includes("book");
+}
+
+function isRecoveredOutcome(outcome?: string) {
+  const s = (outcome || "").toLowerCase();
+  return (
+    s.includes("qual") ||
+    s.includes("book") ||
+    s.includes("won") ||
+    s.includes("recover")
+  );
 }
 
 function MetricCard({
@@ -343,11 +397,16 @@ export default function ConfluxaAdminPage() {
   const [section, setSection] = useState<AdminSection>("overview");
   const [query, setQuery] = useState("");
   const [tenantFilter, setTenantFilter] = useState("all");
+  const [analyticsWindow, setAnalyticsWindow] = useState<AnalyticsWindow>("30");
+
   const [loading, setLoading] = useState(true);
   const [savingTenant, setSavingTenant] = useState(false);
   const [loadingTenantDetail, setLoadingTenantDetail] = useState(false);
   const [error, setError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
+
+  const [userEmail, setUserEmail] = useState("");
+  const [isSupabaseAdmin, setIsSupabaseAdmin] = useState(false);
 
   const [showNewTenantModal, setShowNewTenantModal] = useState(false);
   const [showTenantDetailModal, setShowTenantDetailModal] = useState(false);
@@ -364,17 +423,9 @@ export default function ConfluxaAdminPage() {
     delivery_mode: "email",
   });
 
-  const [isAdminUser, setIsAdminUser] = useState(false);
-  const [sessionChecked, setSessionChecked] = useState(false);
-  const [userEmail, setUserEmail] = useState("");
-
   function getAdminHeaders() {
     const headers: Record<string, string> = {};
-
-    if (isAdminUser && ADMIN_SECRET) {
-      headers["X-Admin-Secret"] = ADMIN_SECRET;
-    }
-
+    if (ADMIN_SECRET) headers["X-Admin-Secret"] = ADMIN_SECRET;
     return headers;
   }
 
@@ -383,39 +434,26 @@ export default function ConfluxaAdminPage() {
     window.location.replace("/login");
   }
 
-  useEffect(() => {
-    async function loadSessionRole() {
-      try {
-        const { data, error } = await supabase.auth.getSession();
+  async function loadSessionDebug() {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-        if (error) {
-          console.error("Failed to get session", error);
-          return;
-        }
+      const email = user?.email || "";
+      const role =
+        (user?.app_metadata?.role as string | undefined) ||
+        (user?.user_metadata?.role as string | undefined) ||
+        "";
 
-        const session = data?.session;
-        const role = session?.user?.app_metadata?.role;
-        const email = session?.user?.email || "";
-
-        console.log("Logged in email:", email);
-        console.log("App metadata:", session?.user?.app_metadata);
-        console.log("Resolved role:", role);
-
-        setUserEmail(email);
-        setIsAdminUser(role === "admin");
-      } catch (err) {
-        console.error("Session role check failed", err);
-      } finally {
-        setSessionChecked(true);
-      }
+      setUserEmail(email);
+      setIsSupabaseAdmin(role.toLowerCase() === "admin");
+    } catch (e) {
+      console.error(e);
     }
-
-    loadSessionRole();
-  }, []);
+  }
 
   async function loadData() {
-    if (!sessionChecked) return;
-
     setLoading(true);
     setError("");
 
@@ -427,10 +465,10 @@ export default function ConfluxaAdminPage() {
           fetch(`${API_BASE}/api/dashboard/summary`, { headers }).then((r) =>
             r.json()
           ),
-          fetch(`${API_BASE}/api/calls?limit=20`, { headers }).then((r) =>
+          fetch(`${API_BASE}/api/calls?limit=200`, { headers }).then((r) =>
             r.json()
           ),
-          fetch(`${API_BASE}/api/leads?limit=20`, { headers }).then((r) =>
+          fetch(`${API_BASE}/api/leads?limit=200`, { headers }).then((r) =>
             r.json()
           ),
           fetch(`${API_BASE}/api/tenants`, { headers }).then((r) => r.json()),
@@ -444,20 +482,10 @@ export default function ConfluxaAdminPage() {
       setLeads(Array.isArray(leadsRes) ? leadsRes : []);
       setTenants(Array.isArray(tenantsRes) ? tenantsRes : []);
       setHealth(healthRes || null);
-
-      console.log("Admin page loadData results", {
-        isAdminUser,
-        userEmail,
-        summaryRes,
-        callsRes,
-        leadsRes,
-        tenantsRes,
-        healthRes,
-      });
     } catch (e) {
       console.error(e);
       setError(
-        "Could not load admin data. Check API base URL, backend health, admin role, and admin secret."
+        "Could not load admin data. Check API base URL, admin secret, and backend health."
       );
     } finally {
       setLoading(false);
@@ -465,16 +493,16 @@ export default function ConfluxaAdminPage() {
   }
 
   useEffect(() => {
-    if (sessionChecked) {
-      loadData();
-    }
-  }, [sessionChecked, isAdminUser]);
+    loadSessionDebug();
+    loadData();
+  }, []);
 
   const filteredCalls = useMemo(() => {
     return calls.filter((item) => {
       const matchesTenant =
         tenantFilter === "all" ||
-        item.tenant_name?.toLowerCase() === tenantFilter.toLowerCase();
+        item.tenant_name?.toLowerCase() === tenantFilter.toLowerCase() ||
+        item.tenant_id === tenantFilter;
 
       const haystack = [
         item.caller_name,
@@ -495,7 +523,8 @@ export default function ConfluxaAdminPage() {
     return leads.filter((item) => {
       const matchesTenant =
         tenantFilter === "all" ||
-        item.tenant_name?.toLowerCase() === tenantFilter.toLowerCase();
+        item.tenant_name?.toLowerCase() === tenantFilter.toLowerCase() ||
+        item.tenant_id === tenantFilter;
 
       const haystack = [
         item.name,
@@ -516,7 +545,8 @@ export default function ConfluxaAdminPage() {
     return tenants.filter((tenant) => {
       const matchesTenant =
         tenantFilter === "all" ||
-        tenant.name?.toLowerCase() === tenantFilter.toLowerCase();
+        tenant.name?.toLowerCase() === tenantFilter.toLowerCase() ||
+        tenant.id === tenantFilter;
 
       const haystack = [tenant.name, tenant.phone_number, tenant.status]
         .join(" ")
@@ -545,6 +575,98 @@ export default function ConfluxaAdminPage() {
   const setupFeesThisMonth = useMemo(() => {
     return tenants.length * 500;
   }, [tenants]);
+
+  const analyticsFilteredTenants = useMemo(() => {
+    if (tenantFilter === "all") return tenants;
+    return tenants.filter(
+      (tenant) =>
+        tenant.id === tenantFilter ||
+        tenant.name.toLowerCase() === tenantFilter.toLowerCase()
+    );
+  }, [tenants, tenantFilter]);
+
+  const analyticsTenantRows = useMemo<TenantAnalyticsRow[]>(() => {
+    const rows = analyticsFilteredTenants.map((tenant) => {
+      const callsCount = Number(tenant.calls || 0);
+      const bookedCount = Number(tenant.booked || 0);
+      const recoveredCount = Number(tenant.recovered || 0);
+
+      return {
+        id: tenant.id,
+        name: tenant.name,
+        status: tenant.status,
+        calls: callsCount,
+        booked: bookedCount,
+        recovered: recoveredCount,
+        bookRate: callsCount ? Math.round((bookedCount / callsCount) * 100) : 0,
+        recoveryRate: callsCount
+          ? Math.round((recoveredCount / callsCount) * 100)
+          : 0,
+      };
+    });
+
+    return rows.sort((a, b) => b.calls - a.calls);
+  }, [analyticsFilteredTenants]);
+
+  const analyticsDays = Number(analyticsWindow);
+
+  const analyticsTrend = useMemo<TrendPoint[]>(() => {
+    const now = new Date();
+    const start = new Date();
+    start.setDate(now.getDate() - (analyticsDays - 1));
+    start.setHours(0, 0, 0, 0);
+
+    const map = new Map<string, TrendPoint>();
+
+    for (let i = 0; i < analyticsDays; i += 1) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      const key = d.toISOString().slice(0, 10);
+      map.set(key, {
+        day: key,
+        label: shortDayLabel(d),
+        calls: 0,
+        booked: 0,
+        recovered: 0,
+      });
+    }
+
+    filteredCalls.forEach((call) => {
+      const d = new Date(call.time);
+      if (Number.isNaN(d.getTime())) return;
+      if (d < start) return;
+
+      const key = d.toISOString().slice(0, 10);
+      const row = map.get(key);
+      if (!row) return;
+
+      row.calls += 1;
+      if (isBookedOutcome(call.outcome)) row.booked += 1;
+      if (isRecoveredOutcome(call.outcome)) row.recovered += 1;
+    });
+
+    return Array.from(map.values());
+  }, [filteredCalls, analyticsDays]);
+
+  const analyticsTotals = useMemo(() => {
+    return analyticsTrend.reduce(
+      (acc, row) => {
+        acc.calls += row.calls;
+        acc.booked += row.booked;
+        acc.recovered += row.recovered;
+        return acc;
+      },
+      { calls: 0, booked: 0, recovered: 0 }
+    );
+  }, [analyticsTrend]);
+
+  const topTenant = analyticsTenantRows[0];
+  const averageBookRate = analyticsTenantRows.length
+    ? Math.round(
+        analyticsTenantRows.reduce((acc, row) => acc + row.bookRate, 0) /
+          analyticsTenantRows.length
+      )
+    : 0;
 
   function triggerAction(message: string, nextSection?: AdminSection) {
     setActionMessage(message);
@@ -603,8 +725,7 @@ export default function ConfluxaAdminPage() {
         name: newTenant.business_name.trim(),
         display_name: newTenant.business_name.trim(),
         phone_number: newTenant.phone_number.trim() || undefined,
-        notification_email:
-          newTenant.notification_email.trim() || undefined,
+        notification_email: newTenant.notification_email.trim() || undefined,
         delivery_mode: newTenant.delivery_mode || "email",
         country_code: "US",
         label: "Main",
@@ -628,7 +749,9 @@ export default function ConfluxaAdminPage() {
 
       setActionMessage(
         `Tenant created successfully: ${
-          data.tenant?.display_name || data.tenant?.name || newTenant.business_name
+          data.tenant?.display_name ||
+          data.tenant?.name ||
+          newTenant.business_name
         }`
       );
 
@@ -847,10 +970,8 @@ export default function ConfluxaAdminPage() {
             </div>
 
             <div className="rounded-2xl border border-slate-200 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-medium text-slate-900">
-                  Phone numbers
-                </div>
+              <div className="text-sm font-medium text-slate-900">
+                Phone numbers
               </div>
 
               <div className="mt-4 space-y-3">
@@ -1195,19 +1316,13 @@ export default function ConfluxaAdminPage() {
           </header>
 
           <div className="space-y-8 px-6 py-6">
-            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
-              <div>
-                <strong>Email:</strong> {userEmail || "Unknown"}
+            {userEmail ? (
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                <div>Email: {userEmail || "—"}</div>
+                <div>Supabase admin role: {isSupabaseAdmin ? "Yes" : "No"}</div>
+                <div>Admin secret present: {ADMIN_SECRET ? "Yes" : "No"}</div>
               </div>
-              <div>
-                <strong>Supabase admin role:</strong>{" "}
-                {isAdminUser ? "Yes" : "No"}
-              </div>
-              <div>
-                <strong>Admin secret present:</strong>{" "}
-                {ADMIN_SECRET ? "Yes" : "No"}
-              </div>
-            </div>
+            ) : null}
 
             {error ? (
               <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -1291,13 +1406,243 @@ export default function ConfluxaAdminPage() {
                   />
                 </div>
 
+                <Card className="rounded-3xl border-slate-200 shadow-sm">
+                  <CardHeader>
+                    <SectionHeader
+                      title="Tenant analytics layer"
+                      description="Cross-tenant performance trends, booking efficiency, and recovery quality."
+                      action={
+                        <div className="flex items-center gap-2">
+                          <Select
+                            value={analyticsWindow}
+                            onValueChange={(value: AnalyticsWindow) =>
+                              setAnalyticsWindow(value)
+                            }
+                          >
+                            <SelectTrigger className="w-[130px] rounded-2xl border-slate-200">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="7">Last 7 days</SelectItem>
+                              <SelectItem value="30">Last 30 days</SelectItem>
+                              <SelectItem value="90">Last 90 days</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      }
+                    />
+                  </CardHeader>
+
+                  <CardContent className="space-y-6">
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                      <MetricCard
+                        title="Analytics calls"
+                        value={analyticsTotals.calls}
+                        note={`${analyticsDays}-day filtered window`}
+                        icon={BarChart3}
+                      />
+                      <MetricCard
+                        title="Analytics booked"
+                        value={analyticsTotals.booked}
+                        note={`${
+                          analyticsTotals.calls
+                            ? Math.round(
+                                (analyticsTotals.booked / analyticsTotals.calls) *
+                                  100
+                              )
+                            : 0
+                        }% booking rate`}
+                        icon={ClipboardList}
+                      />
+                      <MetricCard
+                        title="Analytics recovered"
+                        value={analyticsTotals.recovered}
+                        note={`${
+                          analyticsTotals.calls
+                            ? Math.round(
+                                (analyticsTotals.recovered /
+                                  analyticsTotals.calls) *
+                                  100
+                              )
+                            : 0
+                        }% recovery rate`}
+                        icon={TrendingUp}
+                      />
+                      <MetricCard
+                        title="Top tenant"
+                        value={topTenant?.name || "—"}
+                        note={
+                          topTenant
+                            ? `${topTenant.calls} calls • ${topTenant.bookRate}% booked`
+                            : "No tenant data"
+                        }
+                        icon={Users}
+                      />
+                    </div>
+
+                    <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
+                      <Card className="rounded-3xl border-slate-200 shadow-none">
+                        <CardHeader>
+                          <CardTitle>Call volume trend</CardTitle>
+                          <CardDescription>
+                            Calls, booked calls, and recovered calls over the selected window.
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="h-[320px]">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <LineChart data={analyticsTrend}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                                <XAxis dataKey="label" />
+                                <YAxis />
+                                <Tooltip />
+                                <Line
+                                  type="monotone"
+                                  dataKey="calls"
+                                  strokeWidth={3}
+                                  dot={false}
+                                />
+                                <Line
+                                  type="monotone"
+                                  dataKey="booked"
+                                  strokeWidth={3}
+                                  dot={false}
+                                />
+                                <Line
+                                  type="monotone"
+                                  dataKey="recovered"
+                                  strokeWidth={3}
+                                  dot={false}
+                                />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      <Card className="rounded-3xl border-slate-200 shadow-none">
+                        <CardHeader>
+                          <CardTitle>Tenant performance</CardTitle>
+                          <CardDescription>
+                            Booking and recovery comparison across the visible tenant set.
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="h-[320px]">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart data={analyticsTenantRows.slice(0, 8)}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                                <XAxis dataKey="name" hide />
+                                <YAxis />
+                                <Tooltip />
+                                <Bar dataKey="calls" radius={[8, 8, 0, 0]} />
+                                <Bar dataKey="booked" radius={[8, 8, 0, 0]} />
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    <div className="grid gap-6 xl:grid-cols-[1.3fr_1fr]">
+                      <Card className="rounded-3xl border-slate-200 shadow-none">
+                        <CardHeader>
+                          <CardTitle>Tenant leaderboard</CardTitle>
+                          <CardDescription>
+                            Operational performance by tenant.
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent className="p-0">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Tenant</TableHead>
+                                <TableHead>Status</TableHead>
+                                <TableHead>Calls</TableHead>
+                                <TableHead>Booked</TableHead>
+                                <TableHead>Recovered</TableHead>
+                                <TableHead>Book rate</TableHead>
+                                <TableHead>Recovery rate</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {analyticsTenantRows.map((row) => (
+                                <TableRow key={row.id}>
+                                  <TableCell className="font-medium">
+                                    {row.name}
+                                  </TableCell>
+                                  <TableCell>
+                                    <Badge className={statusTone(row.status)}>
+                                      {row.status}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell>{row.calls}</TableCell>
+                                  <TableCell>{row.booked}</TableCell>
+                                  <TableCell>{row.recovered}</TableCell>
+                                  <TableCell>{row.bookRate}%</TableCell>
+                                  <TableCell>{row.recoveryRate}%</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </CardContent>
+                      </Card>
+
+                      <Card className="rounded-3xl border-slate-200 shadow-none">
+                        <CardHeader>
+                          <CardTitle>Analytics summary</CardTitle>
+                          <CardDescription>
+                            Quick operator insights from the selected tenant view.
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          <div className="rounded-2xl bg-slate-100 p-4">
+                            <div className="text-sm text-slate-500">
+                              Average booking rate
+                            </div>
+                            <div className="mt-2 text-3xl font-semibold text-slate-950">
+                              {averageBookRate}%
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 p-4">
+                            <div className="text-sm text-slate-500">
+                              Visible tenants
+                            </div>
+                            <div className="mt-2 text-2xl font-semibold text-slate-950">
+                              {analyticsTenantRows.length}
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 p-4">
+                            <div className="text-sm text-slate-500">
+                              Search-filtered calls
+                            </div>
+                            <div className="mt-2 text-2xl font-semibold text-slate-950">
+                              {filteredCalls.length}
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 p-4">
+                            <div className="text-sm text-slate-500">
+                              Search-filtered leads
+                            </div>
+                            <div className="mt-2 text-2xl font-semibold text-slate-950">
+                              {filteredLeads.length}
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  </CardContent>
+                </Card>
+
                 <div className="grid gap-6 xl:grid-cols-[1.35fr_1fr]">
                   <Card className="rounded-3xl border-slate-200 shadow-sm">
                     <CardHeader>
                       <CardTitle>Agency command center</CardTitle>
                       <CardDescription>
-                        The operator view for sales, onboarding, support, and
-                        retention.
+                        The operator view for sales, onboarding, support, and retention.
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="grid gap-4 md:grid-cols-2">
@@ -1310,8 +1655,7 @@ export default function ConfluxaAdminPage() {
                           Tenant operations
                         </div>
                         <p className="mt-2 text-sm text-slate-500">
-                          View all tenants, their status, phone lines, and
-                          performance.
+                          View all tenants, their status, phone lines, and performance.
                         </p>
                       </button>
 
@@ -1324,8 +1668,7 @@ export default function ConfluxaAdminPage() {
                           Delivery + reliability
                         </div>
                         <p className="mt-2 text-sm text-slate-500">
-                          Monitor webhook health, retries, summary delivery, and
-                          issues.
+                          Monitor webhook health, retries, summary delivery, and issues.
                         </p>
                       </button>
 
@@ -1338,8 +1681,7 @@ export default function ConfluxaAdminPage() {
                           Call review
                         </div>
                         <p className="mt-2 text-sm text-slate-500">
-                          Search inbound activity across all tenants from one
-                          place.
+                          Search inbound activity across all tenants from one place.
                         </p>
                       </button>
 
@@ -1352,8 +1694,7 @@ export default function ConfluxaAdminPage() {
                           Pipeline visibility
                         </div>
                         <p className="mt-2 text-sm text-slate-500">
-                          Track qualified leads, follow-ups, and proof for
-                          upsells.
+                          Track qualified leads, follow-ups, and proof for upsells.
                         </p>
                       </button>
                     </CardContent>
@@ -1502,8 +1843,7 @@ export default function ConfluxaAdminPage() {
                       <CardHeader>
                         <CardTitle>Tenant accounts</CardTitle>
                         <CardDescription>
-                          Use this for pricing, support, onboarding, and
-                          reviews.
+                          Use this for pricing, support, onboarding, and reviews.
                         </CardDescription>
                       </CardHeader>
                       <CardContent>
@@ -1912,11 +2252,11 @@ export default function ConfluxaAdminPage() {
                       <div className="rounded-2xl border border-slate-200 p-4">
                         <div className="text-sm font-medium">Next steps</div>
                         <ul className="mt-2 space-y-2 text-sm text-slate-500">
-                          <li>Tenant creation is now wired to admin API</li>
-                          <li>Tenant detail modal is live</li>
-                          <li>Tenant dashboard deep links are live</li>
-                          <li>Add CSV export for calls/leads</li>
-                          <li>Add billing/MRR endpoint</li>
+                          <li>Tenant analytics layer is now live</li>
+                          <li>Next: AI call transcript viewer</li>
+                          <li>Next: lead conversion tracking</li>
+                          <li>Next: admin tenant provisioning workflow</li>
+                          <li>Later: CSV export and billing/MRR endpoint</li>
                         </ul>
                       </div>
                     </CardContent>
@@ -1926,8 +2266,7 @@ export default function ConfluxaAdminPage() {
                     <CardHeader>
                       <CardTitle>Admin notes</CardTitle>
                       <CardDescription>
-                        Use this page as the agency operating layer, not the
-                        client view.
+                        Use this page as the agency operating layer, not the client view.
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4 text-sm text-slate-500">
@@ -1935,12 +2274,12 @@ export default function ConfluxaAdminPage() {
                         Client dashboard answers: “How is one business doing?”
                       </p>
                       <p>
-                        Agency admin answers: “What needs action across all
-                        tenants, revenue, delivery, and onboarding?”
+                        Agency admin answers: “What needs action across all tenants,
+                        revenue, delivery, and onboarding?”
                       </p>
                       <p>
-                        That is why this page uses operator language, action
-                        buttons, and cross-tenant visibility.
+                        That is why this page uses operator language, analytics,
+                        action buttons, and cross-tenant visibility.
                       </p>
                     </CardContent>
                   </Card>
