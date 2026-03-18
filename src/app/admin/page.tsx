@@ -127,6 +127,7 @@ type Health = {
     description: string;
     percent: number;
   };
+  admin_view?: boolean;
 };
 
 type TenantPhoneNumber = {
@@ -187,6 +188,9 @@ const API_BASE =
 const APP_BASE =
   process.env.NEXT_PUBLIC_APP_BASE_URL?.replace(/\/+$/, "") ||
   "https://app.getconfluxa.com";
+
+const ADMIN_SECRET =
+  process.env.NEXT_PUBLIC_ADMIN_SECRET?.trim() || "";
 
 const emptySummary: Summary = {
   calls_today: 0,
@@ -360,23 +364,79 @@ export default function ConfluxaAdminPage() {
     delivery_mode: "email",
   });
 
+  const [isAdminUser, setIsAdminUser] = useState(false);
+  const [sessionChecked, setSessionChecked] = useState(false);
+  const [userEmail, setUserEmail] = useState("");
+
+  function getAdminHeaders() {
+    const headers: Record<string, string> = {};
+
+    if (isAdminUser && ADMIN_SECRET) {
+      headers["X-Admin-Secret"] = ADMIN_SECRET;
+    }
+
+    return headers;
+  }
+
   async function handleLogout() {
     await supabase.auth.signOut();
     window.location.replace("/login");
   }
 
+  useEffect(() => {
+    async function loadSessionRole() {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+
+        if (error) {
+          console.error("Failed to get session", error);
+          return;
+        }
+
+        const session = data?.session;
+        const role = session?.user?.app_metadata?.role;
+        const email = session?.user?.email || "";
+
+        console.log("Logged in email:", email);
+        console.log("App metadata:", session?.user?.app_metadata);
+        console.log("Resolved role:", role);
+
+        setUserEmail(email);
+        setIsAdminUser(role === "admin");
+      } catch (err) {
+        console.error("Session role check failed", err);
+      } finally {
+        setSessionChecked(true);
+      }
+    }
+
+    loadSessionRole();
+  }, []);
+
   async function loadData() {
+    if (!sessionChecked) return;
+
     setLoading(true);
     setError("");
 
     try {
+      const headers = getAdminHeaders();
+
       const [summaryRes, callsRes, leadsRes, tenantsRes, healthRes] =
         await Promise.all([
-          fetch(`${API_BASE}/api/dashboard/summary`).then((r) => r.json()),
-          fetch(`${API_BASE}/api/calls?limit=20`).then((r) => r.json()),
-          fetch(`${API_BASE}/api/leads?limit=20`).then((r) => r.json()),
-          fetch(`${API_BASE}/api/tenants`).then((r) => r.json()),
-          fetch(`${API_BASE}/api/system/health`).then((r) => r.json()),
+          fetch(`${API_BASE}/api/dashboard/summary`, { headers }).then((r) =>
+            r.json()
+          ),
+          fetch(`${API_BASE}/api/calls?limit=20`, { headers }).then((r) =>
+            r.json()
+          ),
+          fetch(`${API_BASE}/api/leads?limit=20`, { headers }).then((r) =>
+            r.json()
+          ),
+          fetch(`${API_BASE}/api/tenants`, { headers }).then((r) => r.json()),
+          fetch(`${API_BASE}/api/system/health`, { headers }).then((r) =>
+            r.json()
+          ),
         ]);
 
       setSummary(summaryRes || emptySummary);
@@ -384,10 +444,20 @@ export default function ConfluxaAdminPage() {
       setLeads(Array.isArray(leadsRes) ? leadsRes : []);
       setTenants(Array.isArray(tenantsRes) ? tenantsRes : []);
       setHealth(healthRes || null);
+
+      console.log("Admin page loadData results", {
+        isAdminUser,
+        userEmail,
+        summaryRes,
+        callsRes,
+        leadsRes,
+        tenantsRes,
+        healthRes,
+      });
     } catch (e) {
       console.error(e);
       setError(
-        "Could not load admin data. Check API base URL and backend health."
+        "Could not load admin data. Check API base URL, backend health, admin role, and admin secret."
       );
     } finally {
       setLoading(false);
@@ -395,8 +465,10 @@ export default function ConfluxaAdminPage() {
   }
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (sessionChecked) {
+      loadData();
+    }
+  }, [sessionChecked, isAdminUser]);
 
   const filteredCalls = useMemo(() => {
     return calls.filter((item) => {
@@ -496,7 +568,9 @@ export default function ConfluxaAdminPage() {
     setActionMessage("");
 
     try {
-      const res = await fetch(`${API_BASE}/api/admin/tenants/${tenantId}`);
+      const res = await fetch(`${API_BASE}/api/admin/tenants/${tenantId}`, {
+        headers: getAdminHeaders(),
+      });
       const data = await res.json();
 
       if (!res.ok || !data.ok) {
@@ -541,6 +615,7 @@ export default function ConfluxaAdminPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...getAdminHeaders(),
         },
         body: JSON.stringify(payload),
       });
@@ -1120,6 +1195,20 @@ export default function ConfluxaAdminPage() {
           </header>
 
           <div className="space-y-8 px-6 py-6">
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+              <div>
+                <strong>Email:</strong> {userEmail || "Unknown"}
+              </div>
+              <div>
+                <strong>Supabase admin role:</strong>{" "}
+                {isAdminUser ? "Yes" : "No"}
+              </div>
+              <div>
+                <strong>Admin secret present:</strong>{" "}
+                {ADMIN_SECRET ? "Yes" : "No"}
+              </div>
+            </div>
+
             {error ? (
               <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                 {error}
