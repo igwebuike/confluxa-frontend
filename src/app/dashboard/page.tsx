@@ -1966,7 +1966,15 @@ export default function ConfluxaFrontendPrototype() {
             )}
           </div>
         </main>
+        <CallTranscriptModal
+          open={showTranscriptModal}
+          loading={loadingTranscript}
+          detail={selectedCallDetail}
+          onClose={() => {
+            setShowTranscriptModal(false);
+            setSelectedCallDetail(null);
+          }}
+        />
       </div>
-    </div>
-  );
+    );
 }

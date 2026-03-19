@@ -2335,7 +2335,16 @@ export default function ConfluxaAdminPage() {
             )}
           </div>
         </main>
-      </div>
-    </div>
-  );
+      <CallTranscriptModal
+         open={showTranscriptModal}
+         loading={loadingTranscript}
+         detail={selectedCallDetail}
+         onClose={() => {
+           setShowTranscriptModal(false);
+           setSelectedCallDetail(null);
+  }}
+/>
+</div>
+</div>
+);
 }
