@@ -1,10 +1,9 @@
 "use client";
-
-import React, { useEffect, useMemo, useState } from "react";
-import { motion } from "framer-motion";
 import CallTranscriptModal, {
   type CallTranscriptDetail,
 } from "@/components/CallTranscriptModal";
+import React, { useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import {
   Phone,
   CalendarDays,
@@ -189,10 +188,8 @@ type CallDetail = {
   tenant_phone_label?: string;
   summary: string;
   transcript: string;
-  payload?: unknown;
+  payload?: any;
 };
-
-type ApiRecord = Record<string, unknown>;
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
@@ -353,7 +350,11 @@ const fallbackClients: ClientRow[] = [
 ];
 
 const fallbackFailures: FailureRow[] = [
-  { label: "Webhook retries", value: 2, tone: "bg-amber-100 text-amber-900" },
+  {
+    label: "Webhook retries",
+    value: 2,
+    tone: "bg-amber-100 text-amber-900",
+  },
   {
     label: "Call transcription gaps",
     value: 1,
@@ -587,6 +588,21 @@ function SectionTitle({
   );
 }
 
+// Define navigation item type
+type NavItem = {
+  key: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+};
+
+const NAV_ITEMS: NavItem[] = [
+  { key: "dashboard", label: "Dashboard", icon: BarChart3 },
+  { key: "calls", label: "Calls", icon: Phone },
+  { key: "leads", label: "Leads", icon: ClipboardList },
+  { key: "clients", label: "Clients", icon: Building2 },
+  { key: "settings", label: "Settings", icon: Settings },
+];
+
 export default function ConfluxaFrontendPrototype() {
   const [page, setPage] = useState("dashboard");
   const [tenant, setTenant] = useState("all");
@@ -610,7 +626,6 @@ export default function ConfluxaFrontendPrototype() {
   const [selectedCall, setSelectedCall] = useState<CallDetail | null>(null);
   const [showCallModal, setShowCallModal] = useState(false);
   const [loadingCallDetail, setLoadingCallDetail] = useState(false);
-
   const [showTranscriptModal, setShowTranscriptModal] = useState(false);
   const [loadingTranscript, setLoadingTranscript] = useState(false);
   const [selectedCallDetail, setSelectedCallDetail] =
@@ -622,17 +637,6 @@ export default function ConfluxaFrontendPrototype() {
     setTenantKeyFromUrl(params.get("tenant_key"));
   }, []);
 
-  const tenantScopedQuery = useMemo(() => {
-    return tenantKeyFromUrl
-      ? `tenant_key=${encodeURIComponent(tenantKeyFromUrl)}`
-      : "";
-  }, [tenantKeyFromUrl]);
-
-  function withTenantScope(path: string, extraQuery = "") {
-    const params = [tenantScopedQuery, extraQuery].filter(Boolean).join("&");
-    return `${API_BASE_URL}${path}${params ? `?${params}` : ""}`;
-  }
-
   function buildHeaders() {
     const headers: Record<string, string> = {};
     if (ADMIN_SECRET) {
@@ -641,74 +645,13 @@ export default function ConfluxaFrontendPrototype() {
     return headers;
   }
 
-  async function fetchJson<T = unknown>(url: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(url, {
-      ...init,
-      headers: {
-        ...buildHeaders(),
-        ...(init?.headers || {}),
-      },
-    });
+  const tenantScopedQuery = tenantKeyFromUrl
+    ? `tenant_key=${encodeURIComponent(tenantKeyFromUrl)}`
+    : "";
 
-    let data: unknown = null;
-    try {
-      data = await res.json();
-    } catch {
-      data = null;
-    }
-
-    if (!res.ok) {
-      const maybeRecord =
-        data && typeof data === "object" ? (data as Record<string, unknown>) : {};
-      const message =
-        String(
-          maybeRecord.detail || maybeRecord.error || `Request failed: ${res.status}`
-        ) || `Request failed: ${res.status}`;
-      throw new Error(message);
-    }
-
-    return data as T;
-  }
-
-  function normalizeCallDetail(raw: unknown): CallDetail {
-    const source =
-      raw && typeof raw === "object"
-        ? ((raw as Record<string, unknown>).call as Record<string, unknown>) ||
-          (raw as Record<string, unknown>)
-        : {};
-
-    return {
-      ok: true,
-      id: String(source.id ?? source.call_id ?? ""),
-      tenant_id: source.tenant_id ? String(source.tenant_id) : undefined,
-      tenant_name: String(source.tenant_name ?? source.tenant ?? "Unknown"),
-      caller_name: String(
-        source.caller_name ?? source.caller ?? source.first_name ?? "Unknown Caller"
-      ),
-      caller_phone: String(source.caller_phone ?? source.number ?? ""),
-      caller_email: source.caller_email
-        ? String(source.caller_email)
-        : undefined,
-      time: String(source.time ?? source.created_at ?? source.started_at ?? ""),
-      outcome: String(
-        source.outcome ?? source.qualification_status ?? "Unknown"
-      ),
-      business_name: source.business_name
-        ? String(source.business_name)
-        : undefined,
-      business_phone: source.business_phone
-        ? String(source.business_phone)
-        : undefined,
-      called_number: source.called_number
-        ? String(source.called_number)
-        : undefined,
-      tenant_phone_label: source.tenant_phone_label
-        ? String(source.tenant_phone_label)
-        : undefined,
-      summary: String(source.summary ?? source.call_summary ?? "No summary available."),
-      transcript: String(source.transcript ?? "No transcript available."),
-      payload: source.payload,
-    };
+  function withTenantScope(path: string, extraQuery = "") {
+    const params = [tenantScopedQuery, extraQuery].filter(Boolean).join("&");
+    return `${API_BASE_URL}${path}${params ? `?${params}` : ""}`;
   }
 
   async function handleLogout() {
@@ -722,23 +665,23 @@ export default function ConfluxaFrontendPrototype() {
     setShowTranscriptModal(true);
     setLoadingTranscript(true);
     setSelectedCallDetail(null);
+    setError("");
 
     try {
-      const data = await fetchJson<{ ok?: boolean; call?: CallTranscriptDetail }>(
-        withTenantScope(`/api/calls/${callId}`)
-      );
+      const res = await fetch(withTenantScope(`/api/calls/${callId}`), {
+        headers: buildHeaders(),
+      });
+      const data = await res.json();
 
-      if (!data?.ok || !data?.call) {
-        throw new Error("Failed to load call detail.");
+      if (!res.ok || !data.ok || !data.call) {
+        throw new Error(data.detail || data.error || "Failed to load call detail.");
       }
 
       setSelectedCallDetail(data.call);
     } catch (err) {
       console.error(err);
       setSelectedCallDetail(null);
-      setError(
-        err instanceof Error ? err.message : "Failed to load transcript."
-      );
+      setError("Could not load transcript.");
     } finally {
       setLoadingTranscript(false);
     }
@@ -749,6 +692,57 @@ export default function ConfluxaFrontendPrototype() {
     setError("");
 
     try {
+      const endpoints = [
+        fetch(withTenantScope("/api/dashboard/summary"), {
+          headers: buildHeaders(),
+        }).then((r) =>
+          r.ok ? r.json() : Promise.reject(new Error("Failed summary"))
+        ),
+        fetch(
+          withTenantScope(
+            "/api/dashboard/call-trend",
+            `days=${range === "7d" ? 7 : 30}`
+          ),
+          { headers: buildHeaders() }
+        ).then((r) =>
+          r.ok ? r.json() : Promise.reject(new Error("Failed call trend"))
+        ),
+        fetch(withTenantScope("/api/calls", "limit=20"), {
+          headers: buildHeaders(),
+        }).then((r) =>
+          r.ok ? r.json() : Promise.reject(new Error("Failed calls"))
+        ),
+        fetch(withTenantScope("/api/leads", "limit=20"), {
+          headers: buildHeaders(),
+        }).then((r) =>
+          r.ok ? r.json() : Promise.reject(new Error("Failed leads"))
+        ),
+        fetch(`${API_BASE_URL}/api/tenants`, {
+          headers: buildHeaders(),
+        }).then((r) =>
+          r.ok ? r.json() : Promise.reject(new Error("Failed tenants"))
+        ),
+        fetch(`${API_BASE_URL}/api/system/health`, {
+          headers: buildHeaders(),
+        }).then((r) =>
+          r.ok ? r.json() : Promise.reject(new Error("Failed health"))
+        ),
+        fetch(
+          withTenantScope(
+            "/api/dashboard/analytics",
+            `group_by=day&start_date=&end_date=`
+          ),
+          { headers: buildHeaders() }
+        ).then((r) =>
+          r.ok ? r.json() : Promise.reject(new Error("Failed analytics"))
+        ),
+        fetch(withTenantScope("/api/dashboard/conversion-funnel"), {
+          headers: buildHeaders(),
+        }).then((r) =>
+          r.ok ? r.json() : Promise.reject(new Error("Failed conversion funnel"))
+        ),
+      ];
+
       const [
         summaryRes,
         trendRes,
@@ -758,30 +752,7 @@ export default function ConfluxaFrontendPrototype() {
         healthRes,
         analyticsRes,
         conversionRes,
-      ] = await Promise.all([
-        fetchJson<ApiRecord>(withTenantScope("/api/dashboard/summary")),
-        fetchJson<unknown[]>(
-          withTenantScope(
-            "/api/dashboard/call-trend",
-            `days=${range === "7d" ? 7 : 30}`
-          )
-        ),
-        fetchJson<unknown[]>(withTenantScope("/api/calls", "limit=20")),
-        fetchJson<unknown[]>(withTenantScope("/api/leads", "limit=20")),
-        fetchJson<unknown[]>(`${API_BASE_URL}/api/tenants`, {
-          headers: buildHeaders(),
-        }),
-        fetchJson<ApiRecord>(`${API_BASE_URL}/api/system/health`, {
-          headers: buildHeaders(),
-        }),
-        fetchJson<{ data?: unknown[] }>(
-          withTenantScope(
-            "/api/dashboard/analytics",
-            `group_by=day&start_date=&end_date=`
-          )
-        ),
-        fetchJson<ConversionFunnel>(withTenantScope("/api/dashboard/conversion-funnel")),
-      ]);
+      ] = await Promise.all(endpoints);
 
       setSummary({
         calls_today: Number(summaryRes.calls_today ?? fallbackSummary.calls_today),
@@ -796,130 +767,101 @@ export default function ConfluxaFrontendPrototype() {
           summaryRes.active_clients ?? fallbackSummary.active_clients
         ),
         calls_today_note:
-          String(
-            summaryRes.calls_today_note ?? fallbackSummary.calls_today_note ?? ""
-          ) || "",
+          summaryRes.calls_today_note ?? fallbackSummary.calls_today_note ?? "",
         booked_meetings_note:
-          String(
-            summaryRes.booked_meetings_note ??
-              fallbackSummary.booked_meetings_note ??
-              ""
-          ) || "",
+          summaryRes.booked_meetings_note ??
+          fallbackSummary.booked_meetings_note ??
+          "",
         missed_calls_recovered_note:
-          String(
-            summaryRes.missed_calls_recovered_note ??
-              fallbackSummary.missed_calls_recovered_note ??
-              ""
-          ) || "",
+          summaryRes.missed_calls_recovered_note ??
+          fallbackSummary.missed_calls_recovered_note ??
+          "",
         active_clients_note:
-          String(
-            summaryRes.active_clients_note ??
-              fallbackSummary.active_clients_note ??
-              ""
-          ) || "",
+          summaryRes.active_clients_note ??
+          fallbackSummary.active_clients_note ??
+          "",
       });
 
       setCallTrend(
         Array.isArray(trendRes) && trendRes.length
-          ? trendRes.map((item) => {
-              const row = item as Record<string, unknown>;
-              return {
-                day: String(row.day ?? ""),
-                calls: Number(row.calls ?? 0),
-                booked: Number(row.booked ?? 0),
-              };
-            })
+          ? trendRes.map((item: any) => ({
+              day: String(item.day ?? ""),
+              calls: Number(item.calls ?? 0),
+              booked: Number(item.booked ?? 0),
+            }))
           : fallbackCallTrend
       );
 
       setRecentCalls(
         Array.isArray(callsRes) && callsRes.length
-          ? callsRes.map((item, index) => {
-              const row = item as Record<string, unknown>;
-              return {
-                id: String(
-                  row.id ??
-                    row.call_id ??
-                    `call-${index}-${Math.random().toString(36).slice(2)}`
-                ),
-                caller: String(
-                  row.caller ??
-                    row.caller_name ??
-                    row.first_name ??
-                    "Unknown Caller"
-                ),
-                number: String(row.number ?? row.caller_phone ?? ""),
-                tenant: String(row.tenant ?? row.tenant_name ?? "Unknown"),
-                tenant_id: row.tenant_id ? String(row.tenant_id) : undefined,
-                time: formatTime(
-                  String(row.time ?? row.created_at ?? row.started_at ?? "")
-                ),
-                raw_time: String(
-                  row.time ?? row.created_at ?? row.started_at ?? ""
-                ),
-                duration: formatDuration(
-                  typeof row.duration_seconds === "number"
-                    ? row.duration_seconds
-                    : typeof row.duration === "number"
-                    ? row.duration
-                    : null
-                ),
-                outcome: String(
-                  row.outcome ?? row.qualification_status ?? "New lead"
-                ),
-                summary: String(row.summary ?? row.call_summary ?? "No summary"),
-              };
-            })
+          ? callsRes.map((item: any) => ({
+              id: String(
+                item.id ??
+                  item.call_id ??
+                  `${Date.now()}-${Math.random().toString(36).slice(2)}`
+              ),
+              caller: String(
+                item.caller ??
+                  item.caller_name ??
+                  item.first_name ??
+                  "Unknown Caller"
+              ),
+              number: String(item.number ?? item.caller_phone ?? ""),
+              tenant: String(item.tenant ?? item.tenant_name ?? "Unknown"),
+              tenant_id: item.tenant_id ? String(item.tenant_id) : undefined,
+              time: formatTime(item.time ?? item.created_at ?? item.started_at),
+              raw_time: String(item.time ?? item.created_at ?? item.started_at ?? ""),
+              duration: formatDuration(
+                item.duration_seconds ?? item.duration ?? null
+              ),
+              outcome: String(
+                item.outcome ?? item.qualification_status ?? "New lead"
+              ),
+              summary: String(item.summary ?? item.call_summary ?? "No summary"),
+            }))
           : fallbackCalls
       );
 
       setLeads(
         Array.isArray(leadsRes) && leadsRes.length
-          ? leadsRes.map((item, index) => {
-              const row = item as Record<string, unknown>;
-              const fullName = [row.first_name, row.last_name]
-                .filter(Boolean)
-                .map(String)
-                .join(" ")
-                .trim();
-
-              return {
-                id: String(
-                  row.id ?? `lead-${index}-${Math.random().toString(36).slice(2)}`
-                ),
-                name: fullName || String(row.name ?? "Unknown Lead"),
-                niche: String(row.niche ?? row.industry ?? "General"),
-                status: String(row.status ?? row.qualification_status ?? "New"),
-                business: String(
-                  row.business ?? row.tenant_name ?? row.company_name ?? "Unknown"
-                ),
-                business_id: row.tenant_id ? String(row.tenant_id) : undefined,
-                issue: String(row.issue ?? row.summary ?? "No issue captured"),
-                next: String(row.next ?? row.next_action ?? "Needs follow-up"),
-              };
-            })
+          ? leadsRes.map((item: any) => ({
+              id: String(
+                item.id ??
+                  `${Date.now()}-${Math.random().toString(36).slice(2)}`
+              ),
+              name: String(
+                item.name ||
+                  [item.first_name, item.last_name].filter(Boolean).join(" ") ||
+                  "Unknown Lead"
+              ),
+              niche: String(item.niche ?? item.industry ?? "General"),
+              status: String(item.status ?? item.qualification_status ?? "New"),
+              business: String(
+                item.business ?? item.tenant_name ?? item.company_name ?? "Unknown"
+              ),
+              business_id: item.tenant_id ? String(item.tenant_id) : undefined,
+              issue: String(item.issue ?? item.summary ?? "No issue captured"),
+              next: String(item.next ?? item.next_action ?? "Needs follow-up"),
+            }))
           : fallbackLeads
       );
 
       setClients(
         Array.isArray(tenantsRes) && tenantsRes.length
-          ? tenantsRes.map((item, index) => {
-              const row = item as Record<string, unknown>;
-              return {
-                id: String(
-                  row.id ?? `tenant-${index}-${Math.random().toString(36).slice(2)}`
-                ),
-                name: String(row.name ?? row.display_name ?? "Unknown client"),
-                phone: String(
-                  row.phone ?? row.phone_number ?? row.primary_phone ?? "No number"
-                ),
-                status: String(row.status ?? (row.is_active ? "Active" : "Inactive")),
-                calls: Number(row.calls ?? 0),
-                booked: Number(row.booked ?? 0),
-                recovered: Number(row.recovered ?? 0),
-                tenant_key: row.tenant_key ? String(row.tenant_key) : undefined,
-              };
-            })
+          ? tenantsRes.map((item: any) => ({
+              id: String(item.id ?? `tenant-${Math.random().toString(36).slice(2)}`),
+              name: String(item.name ?? item.display_name ?? "Unknown client"),
+              phone: String(
+                item.phone ?? item.phone_number ?? item.primary_phone ?? "No number"
+              ),
+              status: String(
+                item.status ?? (item.is_active ? "Active" : "Inactive")
+              ),
+              calls: Number(item.calls ?? 0),
+              booked: Number(item.booked ?? 0),
+              recovered: Number(item.recovered ?? 0),
+              tenant_key: item.tenant_key ? String(item.tenant_key) : undefined,
+            }))
           : fallbackClients
       );
 
@@ -938,35 +880,32 @@ export default function ConfluxaFrontendPrototype() {
         ),
         failures:
           Array.isArray(healthRes.failures) && healthRes.failures.length
-            ? (healthRes.failures as unknown[]).map((item) => {
-                const row = item as Record<string, unknown>;
-                const label = String(row.label ?? "Unknown issue");
-                const value = Number(row.value ?? 0);
-                return {
-                  label,
-                  value,
-                  tone: String(row.tone ?? toneForFailure(label, value)),
-                };
-              })
+            ? healthRes.failures.map((item: any) => ({
+                label: String(item.label ?? "Unknown issue"),
+                value: Number(item.value ?? 0),
+                tone: String(
+                  item.tone ??
+                    toneForFailure(
+                      String(item.label ?? ""),
+                      Number(item.value ?? 0)
+                    )
+                ),
+              }))
             : fallbackHealth.failures,
         onboarding_progress:
-          (healthRes.onboarding_progress as SystemHealth["onboarding_progress"]) ??
-          fallbackHealth.onboarding_progress,
+          healthRes.onboarding_progress ?? fallbackHealth.onboarding_progress,
       });
 
       setAnalytics(
         Array.isArray(analyticsRes?.data) && analyticsRes.data.length
-          ? analyticsRes.data.map((item) => {
-              const row = item as Record<string, unknown>;
-              return {
-                bucket: String(row.bucket ?? ""),
-                total_calls: Number(row.total_calls ?? 0),
-                booked_calls: Number(row.booked_calls ?? 0),
-                qualified_calls: Number(row.qualified_calls ?? 0),
-                missed_calls: Number(row.missed_calls ?? 0),
-                book_rate: Number(row.book_rate ?? 0),
-              };
-            })
+          ? analyticsRes.data.map((item: any) => ({
+              bucket: String(item.bucket ?? ""),
+              total_calls: Number(item.total_calls ?? 0),
+              booked_calls: Number(item.booked_calls ?? 0),
+              qualified_calls: Number(item.qualified_calls ?? 0),
+              missed_calls: Number(item.missed_calls ?? 0),
+              book_rate: Number(item.book_rate ?? 0),
+            }))
           : fallbackAnalytics
       );
 
@@ -992,29 +931,31 @@ export default function ConfluxaFrontendPrototype() {
   }
 
   useEffect(() => {
-    void loadDashboard();
+    loadDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantKeyFromUrl, range]);
 
   async function openCallDetail(callId: string) {
+    if (!callId) return;
+
     setLoadingCallDetail(true);
     setError("");
 
     try {
-      const data = await fetchJson<unknown>(withTenantScope(`/api/calls/${callId}`));
-      const normalized = normalizeCallDetail(data);
+      const res = await fetch(withTenantScope(`/api/calls/${callId}`), {
+        headers: buildHeaders(),
+      });
+      const data = await res.json();
 
-      if (!normalized.id) {
-        throw new Error("Failed to load call detail");
+      if (!res.ok || !data.ok || !data.call) {
+        throw new Error(data.detail || data.error || "Failed to load call detail");
       }
 
-      setSelectedCall(normalized);
+      setSelectedCall(data.call);
       setShowCallModal(true);
     } catch (err) {
       console.error(err);
-      setError(
-        err instanceof Error ? err.message : "Could not load call detail."
-      );
+      setError("Could not load call detail.");
     } finally {
       setLoadingCallDetail(false);
     }
@@ -1022,17 +963,20 @@ export default function ConfluxaFrontendPrototype() {
 
   async function handleExport(dataset: "calls" | "leads" | "dashboard") {
     try {
-      const data = await fetchJson<unknown>(
-        withTenantScope("/api/data/export", `dataset=${dataset}&format=json`)
+      const res = await fetch(
+        withTenantScope("/api/data/export", `dataset=${dataset}&format=json`),
+        { headers: buildHeaders() }
       );
+      if (!res.ok) {
+        throw new Error("Failed export");
+      }
+      const data = await res.json();
 
       const rows = Array.isArray(data) ? data : [data];
       downloadCsv(
         `${tenantKeyFromUrl || "agency"}-${dataset}.csv`,
-        rows.map((row) =>
-          typeof row === "object" && row !== null
-            ? (row as Record<string, unknown>)
-            : { value: row }
+        rows.map((row: any) =>
+          typeof row === "object" && row !== null ? row : { value: row }
         )
       );
     } catch (err) {
@@ -1067,8 +1011,7 @@ export default function ConfluxaFrontendPrototype() {
         }
       );
 
-      const data = (await res.json()) as { ok?: boolean; detail?: string; error?: string };
-
+      const data = await res.json();
       if (!res.ok || !data.ok) {
         throw new Error(data.detail || data.error || "Upload failed");
       }
@@ -1125,7 +1068,8 @@ export default function ConfluxaFrontendPrototype() {
     if (tenant === "all") return clients;
     return clients.filter(
       (client) =>
-        client.id === tenant || client.name.toLowerCase() === tenant.toLowerCase()
+        client.id === tenant ||
+        client.name.toLowerCase() === tenant.toLowerCase()
     );
   }, [clients, tenant]);
 
@@ -1135,15 +1079,6 @@ export default function ConfluxaFrontendPrototype() {
       label: formatBucketLabel(item.bucket),
     }));
   }, [analytics]);
-
-  const dashboardTrendData = useMemo(() => {
-    if (analyticsChartData.length) return analyticsChartData;
-    return callTrend.map((item) => ({
-      label: item.day,
-      total_calls: item.calls,
-      booked_calls: item.booked,
-    }));
-  }, [analyticsChartData, callTrend]);
 
   const summaryCards = [
     {
@@ -1201,12 +1136,6 @@ export default function ConfluxaFrontendPrototype() {
             </div>
 
             <div className="space-y-6 p-6">
-              {loadingCallDetail ? (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-                  Loading call detail...
-                </div>
-              ) : null}
-
               <div className="grid gap-4 md:grid-cols-4">
                 <Card className="rounded-2xl border-slate-200 shadow-none">
                   <CardContent className="p-4">
@@ -1298,29 +1227,20 @@ export default function ConfluxaFrontendPrototype() {
 
           <div className="px-4 pb-4">
             <nav className="space-y-1">
-              {[
-                ["dashboard", "Dashboard", BarChart3],
-                ["calls", "Calls", Phone],
-                ["leads", "Leads", ClipboardList],
-                ["clients", "Clients", Building2],
-                ["settings", "Settings", Settings],
-              ].map(([key, label, Icon]) => {
-                const SafeIcon = Icon as React.ComponentType<{ className?: string }>;
-                return (
-                  <button
-                    key={String(key)}
-                    onClick={() => setPage(String(key))}
-                    className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-sm transition ${
-                      page === key
-                        ? "bg-slate-900 text-white"
-                        : "text-slate-600 hover:bg-slate-100"
-                    }`}
-                  >
-                    <SafeIcon className="h-4 w-4" />
-                    <span>{label}</span>
-                  </button>
-                );
-              })}
+              {NAV_ITEMS.map((item) => (
+                <button
+                  key={item.key}
+                  onClick={() => setPage(item.key)}
+                  className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-sm transition ${
+                    page === item.key
+                      ? "bg-slate-900 text-white"
+                      : "text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  <item.icon className="h-4 w-4" />
+                  <span>{item.label}</span>
+                </button>
+              ))}
             </nav>
           </div>
 
@@ -1353,7 +1273,7 @@ export default function ConfluxaFrontendPrototype() {
                 </div>
                 <Button
                   className="mt-5 w-full rounded-2xl bg-white text-slate-900 hover:bg-slate-100"
-                  onClick={() => void loadDashboard()}
+                  onClick={loadDashboard}
                 >
                   <RefreshCcw className="mr-2 h-4 w-4" />
                   Refresh
@@ -1504,7 +1424,7 @@ export default function ConfluxaFrontendPrototype() {
                     <CardContent>
                       <div className="h-[300px]">
                         <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={dashboardTrendData}>
+                          <LineChart data={analyticsChartData}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} />
                             <XAxis dataKey="label" />
                             <YAxis />
@@ -1635,7 +1555,7 @@ export default function ConfluxaFrontendPrototype() {
                             <TableRow
                               key={call.id}
                               className="cursor-pointer"
-                              onClick={() => void openCallDetail(call.id)}
+                              onClick={() => openCallDetail(call.id)}
                             >
                               <TableCell>
                                 <div className="font-medium">{call.caller}</div>
@@ -1722,7 +1642,7 @@ export default function ConfluxaFrontendPrototype() {
                       </Button>
                       <Button
                         className="rounded-2xl bg-slate-900 hover:bg-slate-800"
-                        onClick={() => void handleExport("calls")}
+                        onClick={() => handleExport("calls")}
                       >
                         <Download className="mr-2 h-4 w-4" />
                         Export
@@ -1752,9 +1672,7 @@ export default function ConfluxaFrontendPrototype() {
                               <div className="text-xs text-slate-500">{call.number}</div>
                             </TableCell>
                             <TableCell>{call.tenant}</TableCell>
-                            <TableCell>
-                              {call.raw_time ? formatDateTime(call.raw_time) : call.time}
-                            </TableCell>
+                            <TableCell>{call.time}</TableCell>
                             <TableCell>{call.duration}</TableCell>
                             <TableCell>
                               <Badge variant="secondary">{call.outcome}</Badge>
@@ -1766,7 +1684,7 @@ export default function ConfluxaFrontendPrototype() {
                               <Button
                                 variant="outline"
                                 className="rounded-2xl border-slate-200"
-                                onClick={() => void openCallTranscript(call.id)}
+                                onClick={() => openCallTranscript(call.id)}
                               >
                                 <Eye className="mr-2 h-4 w-4" />
                                 Open
@@ -1793,7 +1711,7 @@ export default function ConfluxaFrontendPrototype() {
                   action={
                     <Button
                       className="rounded-2xl bg-slate-900 hover:bg-slate-800"
-                      onClick={() => void handleExport("leads")}
+                      onClick={() => handleExport("leads")}
                     >
                       <Download className="mr-2 h-4 w-4" />
                       Export leads
@@ -1999,8 +1917,7 @@ export default function ConfluxaFrontendPrototype() {
                     <CardHeader>
                       <CardTitle>Workspace access</CardTitle>
                       <CardDescription>
-                        This dashboard is for monitoring performance. Client onboarding
-                        lives in Admin.
+                        This dashboard is for monitoring performance. Client onboarding lives in Admin.
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
@@ -2021,10 +1938,7 @@ export default function ConfluxaFrontendPrototype() {
                               Agency-wide demo view
                             </div>
                             <div>
-                              Add{" "}
-                              <span className="font-medium">
-                                ?tenant_key=your-tenant-key
-                              </span>{" "}
+                              Add <span className="font-medium">?tenant_key=your-tenant-key</span>{" "}
                               to the URL to scope this dashboard to one client.
                             </div>
                           </div>
@@ -2051,7 +1965,7 @@ export default function ConfluxaFrontendPrototype() {
                         <Button
                           variant="outline"
                           className="rounded-2xl border-slate-200"
-                          onClick={() => void loadDashboard()}
+                          onClick={loadDashboard}
                         >
                           <CheckCircle2 className="mr-2 h-4 w-4" />
                           Run diagnostics
@@ -2069,29 +1983,25 @@ export default function ConfluxaFrontendPrototype() {
                     </CardHeader>
                     <CardContent className="space-y-3">
                       {[
-                        ["View webhook logs", Activity],
-                        ["Map Twilio numbers", Phone],
-                        ["Review failed deliveries", AlertTriangle],
-                        ["Open call events", ClipboardList],
-                        ["Check API health", CheckCircle2],
-                      ].map(([label, Icon]) => {
-                        const SafeIcon =
-                          Icon as React.ComponentType<{ className?: string }>;
-                        return (
-                          <button
-                            key={String(label)}
-                            className="flex w-full items-center justify-between rounded-2xl border border-slate-200 p-4 text-left hover:bg-slate-50"
-                          >
-                            <div className="flex items-center gap-3">
-                              <div className="rounded-xl bg-slate-100 p-2">
-                                <SafeIcon className="h-4 w-4" />
-                              </div>
-                              <span className="font-medium">{label}</span>
+                        { label: "View webhook logs", icon: Activity },
+                        { label: "Map Twilio numbers", icon: Phone },
+                        { label: "Review failed deliveries", icon: AlertTriangle },
+                        { label: "Open call events", icon: ClipboardList },
+                        { label: "Check API health", icon: CheckCircle2 },
+                      ].map(({ label, icon: Icon }) => (
+                        <button
+                          key={label}
+                          className="flex w-full items-center justify-between rounded-2xl border border-slate-200 p-4 text-left hover:bg-slate-50"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="rounded-xl bg-slate-100 p-2">
+                              <Icon className="h-4 w-4" />
                             </div>
-                            <ChevronRight className="h-4 w-4 text-slate-400" />
-                          </button>
-                        );
-                      })}
+                            <span className="font-medium">{label}</span>
+                          </div>
+                          <ChevronRight className="h-4 w-4 text-slate-400" />
+                        </button>
+                      ))}
                     </CardContent>
                   </Card>
                 </div>

@@ -1,4 +1,5 @@
 "use client";
+
 import CallTranscriptModal, {
   type CallTranscriptDetail,
 } from "@/components/CallTranscriptModal";
@@ -33,7 +34,7 @@ import {
   BarChart3,
   TrendingUp,
 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { getSupabaseClient } from "@/lib/supabase";
 
 import {
   Card,
@@ -418,7 +419,9 @@ export default function ConfluxaAdminPage() {
     useState<TenantDetail | null>(null);
   const [showTranscriptModal, setShowTranscriptModal] = useState(false);
   const [loadingTranscript, setLoadingTranscript] = useState(false);
-  const [selectedCallDetail, setSelectedCallDetail] =useState<CallTranscriptDetail | null>(null);
+  const [selectedCallDetail, setSelectedCallDetail] =
+    useState<CallTranscriptDetail | null>(null);
+
   const [newTenant, setNewTenant] = useState({
     business_name: "",
     notification_email: "",
@@ -434,12 +437,14 @@ export default function ConfluxaAdminPage() {
   }
 
   async function handleLogout() {
+    const supabase = getSupabaseClient();
     await supabase.auth.signOut();
     window.location.replace("/login");
   }
 
   async function loadSessionDebug() {
     try {
+      const supabase = getSupabaseClient();
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -713,6 +718,7 @@ export default function ConfluxaAdminPage() {
       setLoadingTenantDetail(false);
     }
   }
+
   async function openCallTranscript(callId: string, tenantName?: string) {
     if (!callId) return;
 
@@ -731,14 +737,13 @@ export default function ConfluxaAdminPage() {
       }
 
       const url = tenantKey
-        ? `${API_BASE}/api/calls/${callId}?tenant_key=${encodeURIComponent(tenantKey)}`
+        ? `${API_BASE}/api/calls/${callId}?tenant_key=${encodeURIComponent(
+            tenantKey
+          )}`
         : `${API_BASE}/api/calls/${callId}`;
 
       const res = await fetch(url, {
-        headers: {
-          "X-Admin-Secret":
-            process.env.NEXT_PUBLIC_ADMIN_SECRET || "",
-        },
+        headers: getAdminHeaders(),
       });
 
       const data = await res.json();
@@ -756,6 +761,7 @@ export default function ConfluxaAdminPage() {
       setLoadingTranscript(false);
     }
   }
+
   async function saveNewTenant() {
     if (!newTenant.business_name.trim()) {
       setActionMessage("Enter a business name first.");
@@ -1821,7 +1827,7 @@ export default function ConfluxaAdminPage() {
                               <TableHead>Time</TableHead>
                               <TableHead>Outcome</TableHead>
                               <TableHead>Summary</TableHead>
-							  <TableHead>Action</TableHead>
+                              <TableHead>Action</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -1844,6 +1850,19 @@ export default function ConfluxaAdminPage() {
                                 </TableCell>
                                 <TableCell className="max-w-[320px] truncate">
                                   {row.summary || "No summary yet"}
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="rounded-2xl"
+                                    onClick={() =>
+                                      openCallTranscript(row.id, row.tenant_name)
+                                    }
+                                  >
+                                    <Eye className="mr-2 h-4 w-4" />
+                                    Open
+                                  </Button>
                                 </TableCell>
                               </TableRow>
                             ))}
@@ -2090,6 +2109,7 @@ export default function ConfluxaAdminPage() {
                           <TableHead>Time</TableHead>
                           <TableHead>Outcome</TableHead>
                           <TableHead>Summary</TableHead>
+                          <TableHead>Action</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -2112,6 +2132,19 @@ export default function ConfluxaAdminPage() {
                             </TableCell>
                             <TableCell className="max-w-[320px] truncate">
                               {row.summary || "No summary yet"}
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="rounded-2xl"
+                                onClick={() =>
+                                  openCallTranscript(row.id, row.tenant_name)
+                                }
+                              >
+                                <Eye className="mr-2 h-4 w-4" />
+                                Open
+                              </Button>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -2335,16 +2368,17 @@ export default function ConfluxaAdminPage() {
             )}
           </div>
         </main>
-      <CallTranscriptModal
-         open={showTranscriptModal}
-         loading={loadingTranscript}
-         detail={selectedCallDetail}
-         onClose={() => {
-           setShowTranscriptModal(false);
-           setSelectedCallDetail(null);
-  }}
-/>
-</div>
-</div>
-);
+
+        <CallTranscriptModal
+          open={showTranscriptModal}
+          loading={loadingTranscript}
+          detail={selectedCallDetail}
+          onClose={() => {
+            setShowTranscriptModal(false);
+            setSelectedCallDetail(null);
+          }}
+        />
+      </div>
+    </div>
+  );
 }
