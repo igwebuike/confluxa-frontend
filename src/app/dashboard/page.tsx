@@ -1,52 +1,32 @@
 "use client";
-import CallTranscriptModal, {
-  type CallTranscriptDetail,
-} from "@/components/CallTranscriptModal";
+
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Phone,
   CalendarDays,
   Building2,
-  Activity,
   Settings,
   Bell,
   Search,
-  ChevronRight,
   CheckCircle2,
   AlertTriangle,
   PhoneCall,
-  Headphones,
-  Briefcase,
   BarChart3,
   ClipboardList,
-  BadgeCheck,
   Clock3,
-  Filter,
-  Plus,
-  ExternalLink,
-  Eye,
-  X,
   RefreshCcw,
-  Download,
-  Upload,
   TrendingUp,
   Users,
   FileText,
+  Briefcase,
+  LogOut,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Progress } from "@/components/ui/progress";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Select,
@@ -75,407 +55,122 @@ import {
   Bar,
 } from "recharts";
 
-type DashboardSummary = {
-  calls_today: number;
-  booked_meetings: number;
-  missed_calls_recovered: number;
-  active_clients: number;
-  calls_today_note?: string;
-  booked_meetings_note?: string;
-  missed_calls_recovered_note?: string;
-  active_clients_note?: string;
-};
-
-type CallTrendPoint = {
-  day: string;
-  calls: number;
-  booked: number;
-};
-
-type CallRow = {
+type Profile = {
   id: string;
-  caller: string;
-  number: string;
-  tenant: string;
-  tenant_id?: string;
-  time: string;
-  raw_time?: string;
-  duration: string;
-  outcome: string;
-  summary: string;
+  email: string | null;
+  full_name: string | null;
+  global_role: string;
 };
 
-type LeadRow = {
+type Tenant = {
+  id: string;
+  tenant_key: string;
+  name: string;
+  display_name: string | null;
+  industry: string | null;
+};
+
+type Membership = {
+  id: string;
+  role: string;
+  tenant: Tenant | null;
+};
+
+type Contact = {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  email: string | null;
+  phone: string | null;
+  company: string | null;
+  created_at: string;
+};
+
+type PipelineStage = {
   id: string;
   name: string;
-  niche: string;
-  status: string;
-  business: string;
-  business_id?: string;
-  issue: string;
-  next: string;
+  stage_key: string;
+  position: number;
 };
 
-type ClientRow = {
+type Deal = {
   id: string;
-  name: string;
-  phone: string;
+  title: string;
   status: string;
-  calls: number;
-  booked: number;
-  recovered: number;
-  tenant_key?: string;
+  source: string | null;
+  estimated_value: number | null;
+  probability: number | null;
+  created_at: string;
+  last_activity_at: string | null;
+  stage: PipelineStage | null;
+  contact: {
+    id: string;
+    first_name: string | null;
+    last_name: string | null;
+    email: string | null;
+    phone: string | null;
+  } | null;
 };
 
-type FailureRow = {
+type Task = {
+  id: string;
+  title: string;
+  description: string | null;
+  status: string;
+  priority: string;
+  due_at: string | null;
+  created_at: string;
+  contact: {
+    id: string;
+    first_name: string | null;
+    last_name: string | null;
+    email: string | null;
+  } | null;
+};
+
+type Call = {
+  id: string;
+  external_call_id: string | null;
+  direction: string | null;
+  caller_phone: string | null;
+  caller_email: string | null;
+  called_number: string | null;
+  duration_seconds: number | null;
+  summary: string | null;
+  transcript: string | null;
+  outcome: string | null;
+  qualification_status: string | null;
+  created_at: string;
+  contact: {
+    id: string;
+    first_name: string | null;
+    last_name: string | null;
+    email: string | null;
+    phone: string | null;
+  } | null;
+};
+
+type NavKey = "overview" | "calls" | "deals" | "tasks" | "contacts" | "settings";
+
+const NAV_ITEMS: Array<{
+  key: NavKey;
   label: string;
-  value: number;
-  tone: string;
-};
-
-type SystemHealth = {
-  voice_routing: string;
-  webhook_health: string;
-  email_delivery: string;
-  email_retries?: number;
-  failures?: FailureRow[];
-  onboarding_progress?: {
-    label: string;
-    description: string;
-    percent: number;
-  };
-};
-
-type AnalyticsBucket = {
-  bucket: string;
-  total_calls: number;
-  booked_calls: number;
-  qualified_calls: number;
-  missed_calls: number;
-  book_rate: number;
-};
-
-type ConversionStage = {
-  stage: string;
-  count: number;
-};
-
-type ConversionFunnel = {
-  ok: boolean;
-  tenant_key?: string;
-  tenant_name?: string;
-  total_leads: number;
-  stages: ConversionStage[];
-  conversion: {
-    lead_to_booked_pct: number;
-    qualified_to_booked_pct: number;
-  };
-};
-
-type CallDetail = {
-  ok?: boolean;
-  id: string;
-  tenant_id?: string;
-  tenant_name: string;
-  caller_name: string;
-  caller_phone: string;
-  caller_email?: string;
-  time: string;
-  outcome: string;
-  business_name?: string;
-  business_phone?: string;
-  called_number?: string;
-  tenant_phone_label?: string;
-  summary: string;
-  transcript: string;
-  payload?: any;
-};
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
-  "https://confluxa-core.onrender.com";
-
-const ADMIN_BASE_URL =
-  process.env.NEXT_PUBLIC_ADMIN_BASE_URL?.replace(/\/+$/, "") ||
-  "https://app.getconfluxa.com/admin";
-
-const ADMIN_SECRET = process.env.NEXT_PUBLIC_ADMIN_SECRET?.trim() || "";
-
-const fallbackSummary: DashboardSummary = {
-  calls_today: 42,
-  booked_meetings: 9,
-  missed_calls_recovered: 14,
-  active_clients: 6,
-  calls_today_note: "+18% vs yesterday",
-  booked_meetings_note: "3 awaiting confirmation",
-  missed_calls_recovered_note: "AI answered after hours",
-  active_clients_note: "2 in onboarding",
-};
-
-const fallbackCallTrend: CallTrendPoint[] = [
-  { day: "Mon", calls: 22, booked: 3 },
-  { day: "Tue", calls: 31, booked: 5 },
-  { day: "Wed", calls: 28, booked: 4 },
-  { day: "Thu", calls: 39, booked: 7 },
-  { day: "Fri", calls: 42, booked: 9 },
-  { day: "Sat", calls: 18, booked: 2 },
-  { day: "Sun", calls: 11, booked: 1 },
+  icon: React.ComponentType<{ className?: string }>;
+}> = [
+  { key: "overview", label: "Dashboard", icon: BarChart3 },
+  { key: "calls", label: "Calls", icon: Phone },
+  { key: "deals", label: "Deals", icon: Briefcase },
+  { key: "tasks", label: "Tasks", icon: ClipboardList },
+  { key: "contacts", label: "Contacts", icon: Users },
+  { key: "settings", label: "Settings", icon: Settings },
 ];
 
-const fallbackCalls: CallRow[] = [
-  {
-    id: "1",
-    caller: "Brian Adams",
-    number: "+1 512-999-0995",
-    tenant: "Innovative Mechanical",
-    tenant_id: "im",
-    time: "7:36 PM",
-    raw_time: new Date().toISOString(),
-    duration: "4m 12s",
-    outcome: "Qualified",
-    summary: "Heating failure. Service follow-up needed.",
-  },
-  {
-    id: "2",
-    caller: "Sarah Kim",
-    number: "+1 469-222-1010",
-    tenant: "Knowledge Bureau",
-    tenant_id: "kb",
-    time: "6:58 PM",
-    raw_time: new Date().toISOString(),
-    duration: "6m 03s",
-    outcome: "Booked",
-    summary: "Requested course consultation. Good fit.",
-  },
-  {
-    id: "3",
-    caller: "David Flores",
-    number: "+1 214-110-8888",
-    tenant: "Medspa Demo",
-    tenant_id: "medspa",
-    time: "5:41 PM",
-    raw_time: new Date().toISOString(),
-    duration: "2m 41s",
-    outcome: "New lead",
-    summary: "Asking about botox pricing and appointment windows.",
-  },
-  {
-    id: "4",
-    caller: "Unknown Caller",
-    number: "+1 817-221-4455",
-    tenant: "UOT",
-    tenant_id: "uot",
-    time: "4:12 PM",
-    raw_time: new Date().toISOString(),
-    duration: "1m 28s",
-    outcome: "Missed intent",
-    summary: "Ended early. Could not confirm contact info.",
-  },
-];
-
-const fallbackLeads: LeadRow[] = [
-  {
-    id: "1",
-    name: "Brian Adams",
-    niche: "HVAC",
-    status: "Qualified",
-    business: "Innovative Mechanical",
-    business_id: "im",
-    issue: "Heating issue",
-    next: "Call back in 15 min",
-  },
-  {
-    id: "2",
-    name: "Sarah Kim",
-    niche: "Training",
-    status: "Booked",
-    business: "Knowledge Bureau",
-    business_id: "kb",
-    issue: "Course consultation",
-    next: "Meeting tomorrow",
-  },
-  {
-    id: "3",
-    name: "Amanda Lee",
-    niche: "Medspa",
-    status: "New",
-    business: "Glow Medspa",
-    business_id: "medspa",
-    issue: "Botox pricing",
-    next: "Send SMS follow-up",
-  },
-  {
-    id: "4",
-    name: "James R.",
-    niche: "Legal",
-    status: "Contacted",
-    business: "Northstar Legal",
-    business_id: "legal",
-    issue: "Consult scheduling",
-    next: "Awaiting reply",
-  },
-];
-
-const fallbackClients: ClientRow[] = [
-  {
-    id: "im",
-    name: "Innovative Mechanical",
-    phone: "+1 281-299-3921",
-    status: "Active",
-    calls: 42,
-    booked: 6,
-    recovered: 11,
-    tenant_key: "innovative-mechanical",
-  },
-  {
-    id: "kb",
-    name: "Knowledge Bureau",
-    phone: "+1 202-555-1132",
-    status: "Active",
-    calls: 28,
-    booked: 8,
-    recovered: 2,
-    tenant_key: "knowledge-bureau",
-  },
-  {
-    id: "medspa",
-    name: "Glow Medspa",
-    phone: "+1 469-555-7711",
-    status: "Onboarding",
-    calls: 6,
-    booked: 1,
-    recovered: 3,
-    tenant_key: "glow-medspa",
-  },
-];
-
-const fallbackFailures: FailureRow[] = [
-  {
-    label: "Webhook retries",
-    value: 2,
-    tone: "bg-amber-100 text-amber-900",
-  },
-  {
-    label: "Call transcription gaps",
-    value: 1,
-    tone: "bg-red-100 text-red-900",
-  },
-  {
-    label: "Number mapping alerts",
-    value: 0,
-    tone: "bg-emerald-100 text-emerald-900",
-  },
-];
-
-const fallbackHealth: SystemHealth = {
-  voice_routing: "Healthy",
-  webhook_health: "Healthy",
-  email_delivery: "2 retries",
-  email_retries: 2,
-  failures: fallbackFailures,
-  onboarding_progress: {
-    label: "Client onboarding progress",
-    description: "2 of 3 steps completed for Glow Medspa",
-    percent: 66,
-  },
-};
-
-const fallbackAnalytics: AnalyticsBucket[] = [
-  {
-    bucket: "2026-03-11",
-    total_calls: 18,
-    booked_calls: 3,
-    qualified_calls: 7,
-    missed_calls: 2,
-    book_rate: 16.7,
-  },
-  {
-    bucket: "2026-03-12",
-    total_calls: 24,
-    booked_calls: 4,
-    qualified_calls: 8,
-    missed_calls: 3,
-    book_rate: 16.7,
-  },
-  {
-    bucket: "2026-03-13",
-    total_calls: 21,
-    booked_calls: 5,
-    qualified_calls: 9,
-    missed_calls: 2,
-    book_rate: 23.8,
-  },
-  {
-    bucket: "2026-03-14",
-    total_calls: 29,
-    booked_calls: 6,
-    qualified_calls: 10,
-    missed_calls: 3,
-    book_rate: 20.7,
-  },
-  {
-    bucket: "2026-03-15",
-    total_calls: 16,
-    booked_calls: 2,
-    qualified_calls: 6,
-    missed_calls: 1,
-    book_rate: 12.5,
-  },
-  {
-    bucket: "2026-03-16",
-    total_calls: 31,
-    booked_calls: 8,
-    qualified_calls: 12,
-    missed_calls: 4,
-    book_rate: 25.8,
-  },
-  {
-    bucket: "2026-03-17",
-    total_calls: 22,
-    booked_calls: 4,
-    qualified_calls: 9,
-    missed_calls: 2,
-    book_rate: 18.2,
-  },
-];
-
-const fallbackConversionFunnel: ConversionFunnel = {
-  ok: true,
-  tenant_key: "uot",
-  tenant_name: "UOT",
-  total_leads: 50,
-  stages: [
-    { stage: "New", count: 14 },
-    { stage: "Contacted", count: 8 },
-    { stage: "Qualified", count: 12 },
-    { stage: "Booked", count: 9 },
-    { stage: "Won", count: 3 },
-    { stage: "Missed", count: 2 },
-    { stage: "Follow-up", count: 2 },
-  ],
-  conversion: {
-    lead_to_booked_pct: 18,
-    qualified_to_booked_pct: 75,
-  },
-};
-
-function toneForFailure(label: string, value: number) {
-  const lower = label.toLowerCase();
-  if (value === 0) return "bg-emerald-100 text-emerald-900";
-  if (lower.includes("retry") || lower.includes("mapping")) {
-    return "bg-amber-100 text-amber-900";
-  }
-  return "bg-red-100 text-red-900";
+function fullName(first?: string | null, last?: string | null, fallback = "Unknown") {
+  const name = [first || "", last || ""].join(" ").trim();
+  return name || fallback;
 }
 
-function formatTime(input?: string) {
-  if (!input) return "";
-  const d = new Date(input);
-  if (Number.isNaN(d.getTime())) return input;
-  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
-function formatDateTime(input?: string) {
+function formatDateTime(input?: string | null) {
   if (!input) return "—";
   const d = new Date(input);
   if (Number.isNaN(d.getTime())) return input;
@@ -487,52 +182,36 @@ function formatDateTime(input?: string) {
   });
 }
 
-function formatBucketLabel(input?: string) {
-  if (!input) return "";
+function formatTime(input?: string | null) {
+  if (!input) return "—";
   const d = new Date(input);
   if (Number.isNaN(d.getTime())) return input;
-  return d.toLocaleDateString([], {
-    month: "short",
-    day: "numeric",
+  return d.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
   });
 }
 
+function formatCurrency(value?: number | null) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(value || 0);
+}
+
 function formatDuration(seconds?: number | null) {
-  if (seconds == null || Number.isNaN(seconds)) return "";
+  if (seconds == null) return "—";
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   if (mins <= 0) return `${secs}s`;
   return `${mins}m ${secs}s`;
 }
 
-function csvEscape(value: unknown) {
-  const stringValue = String(value ?? "");
-  if (
-    stringValue.includes(",") ||
-    stringValue.includes('"') ||
-    stringValue.includes("\n")
-  ) {
-    return `"${stringValue.replace(/"/g, '""')}"`;
-  }
-  return stringValue;
-}
-
-function downloadCsv(filename: string, rows: Record<string, unknown>[]) {
-  if (!rows.length) return;
-
-  const headers = Object.keys(rows[0]);
-  const csv = [
-    headers.join(","),
-    ...rows.map((row) => headers.map((h) => csvEscape(row[h])).join(",")),
-  ].join("\n");
-
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+function startOfToday() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
 }
 
 function StatCard({
@@ -578,9 +257,7 @@ function SectionTitle({
   return (
     <div className="flex items-center justify-between gap-4">
       <div>
-        <h2 className="text-xl font-semibold tracking-tight text-slate-900">
-          {title}
-        </h2>
+        <h2 className="text-xl font-semibold tracking-tight text-slate-900">{title}</h2>
         <p className="text-sm text-slate-500">{description}</p>
       </div>
       {action}
@@ -588,627 +265,443 @@ function SectionTitle({
   );
 }
 
-// Define navigation item type
-type NavItem = {
-  key: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-};
-
-const NAV_ITEMS: NavItem[] = [
-  { key: "dashboard", label: "Dashboard", icon: BarChart3 },
-  { key: "calls", label: "Calls", icon: Phone },
-  { key: "leads", label: "Leads", icon: ClipboardList },
-  { key: "clients", label: "Clients", icon: Building2 },
-  { key: "settings", label: "Settings", icon: Settings },
-];
-
-export default function ConfluxaFrontendPrototype() {
-  const [page, setPage] = useState("dashboard");
-  const [tenant, setTenant] = useState("all");
+export default function DashboardPage() {
+  const [page, setPage] = useState<NavKey>("overview");
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [memberships, setMemberships] = useState<Membership[]>([]);
+  const [adminTenants, setAdminTenants] = useState<Tenant[]>([]);
+  const [selectedTenantId, setSelectedTenantId] = useState<string>("");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
-  const [range, setRange] = useState<"7d" | "30d">("7d");
-  const [uploading, setUploading] = useState(false);
-  const [tenantKeyFromUrl, setTenantKeyFromUrl] = useState<string | null>(null);
 
-  const [summary, setSummary] = useState<DashboardSummary>(fallbackSummary);
-  const [callTrend, setCallTrend] = useState<CallTrendPoint[]>(fallbackCallTrend);
-  const [recentCalls, setRecentCalls] = useState<CallRow[]>(fallbackCalls);
-  const [leads, setLeads] = useState<LeadRow[]>(fallbackLeads);
-  const [clients, setClients] = useState<ClientRow[]>(fallbackClients);
-  const [health, setHealth] = useState<SystemHealth>(fallbackHealth);
-  const [analytics, setAnalytics] = useState<AnalyticsBucket[]>(fallbackAnalytics);
-  const [conversionFunnel, setConversionFunnel] =
-    useState<ConversionFunnel>(fallbackConversionFunnel);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [deals, setDeals] = useState<Deal[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [calls, setCalls] = useState<Call[]>([]);
 
-  const [selectedCall, setSelectedCall] = useState<CallDetail | null>(null);
-  const [showCallModal, setShowCallModal] = useState(false);
-  const [loadingCallDetail, setLoadingCallDetail] = useState(false);
-  const [showTranscriptModal, setShowTranscriptModal] = useState(false);
-  const [loadingTranscript, setLoadingTranscript] = useState(false);
-  const [selectedCallDetail, setSelectedCallDetail] =
-    useState<CallTranscriptDetail | null>(null);
+  const selectedTenant = useMemo(() => {
+    const fromMembership = memberships.find((m) => m.tenant?.id === selectedTenantId)?.tenant;
+    const fromAdmin = adminTenants.find((t) => t.id === selectedTenantId);
+    return fromMembership || fromAdmin || null;
+  }, [memberships, adminTenants, selectedTenantId]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    setTenantKeyFromUrl(params.get("tenant_key"));
-  }, []);
+  const tenantOptions = useMemo(() => {
+    const membershipTenants = memberships
+      .map((m) => m.tenant)
+      .filter(Boolean) as Tenant[];
 
-  function buildHeaders() {
-    const headers: Record<string, string> = {};
-    if (ADMIN_SECRET) {
-      headers["X-Admin-Secret"] = ADMIN_SECRET;
+    const all = [...membershipTenants];
+    for (const tenant of adminTenants) {
+      if (!all.some((t) => t.id === tenant.id)) {
+        all.push(tenant);
+      }
     }
-    return headers;
-  }
-
-  const tenantScopedQuery = tenantKeyFromUrl
-    ? `tenant_key=${encodeURIComponent(tenantKeyFromUrl)}`
-    : "";
-
-  function withTenantScope(path: string, extraQuery = "") {
-    const params = [tenantScopedQuery, extraQuery].filter(Boolean).join("&");
-    return `${API_BASE_URL}${path}${params ? `?${params}` : ""}`;
-  }
+    return all;
+  }, [memberships, adminTenants]);
 
   async function handleLogout() {
     await supabase.auth.signOut();
     window.location.replace("/login");
   }
 
-  async function openCallTranscript(callId: string) {
-    if (!callId) return;
-
-    setShowTranscriptModal(true);
-    setLoadingTranscript(true);
-    setSelectedCallDetail(null);
-    setError("");
-
-    try {
-      const res = await fetch(withTenantScope(`/api/calls/${callId}`), {
-        headers: buildHeaders(),
-      });
-      const data = await res.json();
-
-      if (!res.ok || !data.ok || !data.call) {
-        throw new Error(data.detail || data.error || "Failed to load call detail.");
-      }
-
-      setSelectedCallDetail(data.call);
-    } catch (err) {
-      console.error(err);
-      setSelectedCallDetail(null);
-      setError("Could not load transcript.");
-    } finally {
-      setLoadingTranscript(false);
-    }
-  }
-
-  async function loadDashboard() {
+  async function loadBase() {
     setLoading(true);
     setError("");
 
     try {
-      const endpoints = [
-        fetch(withTenantScope("/api/dashboard/summary"), {
-          headers: buildHeaders(),
-        }).then((r) =>
-          r.ok ? r.json() : Promise.reject(new Error("Failed summary"))
-        ),
-        fetch(
-          withTenantScope(
-            "/api/dashboard/call-trend",
-            `days=${range === "7d" ? 7 : 30}`
-          ),
-          { headers: buildHeaders() }
-        ).then((r) =>
-          r.ok ? r.json() : Promise.reject(new Error("Failed call trend"))
-        ),
-        fetch(withTenantScope("/api/calls", "limit=20"), {
-          headers: buildHeaders(),
-        }).then((r) =>
-          r.ok ? r.json() : Promise.reject(new Error("Failed calls"))
-        ),
-        fetch(withTenantScope("/api/leads", "limit=20"), {
-          headers: buildHeaders(),
-        }).then((r) =>
-          r.ok ? r.json() : Promise.reject(new Error("Failed leads"))
-        ),
-        fetch(`${API_BASE_URL}/api/tenants`, {
-          headers: buildHeaders(),
-        }).then((r) =>
-          r.ok ? r.json() : Promise.reject(new Error("Failed tenants"))
-        ),
-        fetch(`${API_BASE_URL}/api/system/health`, {
-          headers: buildHeaders(),
-        }).then((r) =>
-          r.ok ? r.json() : Promise.reject(new Error("Failed health"))
-        ),
-        fetch(
-          withTenantScope(
-            "/api/dashboard/analytics",
-            `group_by=day&start_date=&end_date=`
-          ),
-          { headers: buildHeaders() }
-        ).then((r) =>
-          r.ok ? r.json() : Promise.reject(new Error("Failed analytics"))
-        ),
-        fetch(withTenantScope("/api/dashboard/conversion-funnel"), {
-          headers: buildHeaders(),
-        }).then((r) =>
-          r.ok ? r.json() : Promise.reject(new Error("Failed conversion funnel"))
-        ),
-      ];
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
 
-      const [
-        summaryRes,
-        trendRes,
-        callsRes,
-        leadsRes,
-        tenantsRes,
-        healthRes,
-        analyticsRes,
-        conversionRes,
-      ] = await Promise.all(endpoints);
+      if (authError || !user) {
+        window.location.replace("/login");
+        return;
+      }
 
-      setSummary({
-        calls_today: Number(summaryRes.calls_today ?? fallbackSummary.calls_today),
-        booked_meetings: Number(
-          summaryRes.booked_meetings ?? fallbackSummary.booked_meetings
-        ),
-        missed_calls_recovered: Number(
-          summaryRes.missed_calls_recovered ??
-            fallbackSummary.missed_calls_recovered
-        ),
-        active_clients: Number(
-          summaryRes.active_clients ?? fallbackSummary.active_clients
-        ),
-        calls_today_note:
-          summaryRes.calls_today_note ?? fallbackSummary.calls_today_note ?? "",
-        booked_meetings_note:
-          summaryRes.booked_meetings_note ??
-          fallbackSummary.booked_meetings_note ??
-          "",
-        missed_calls_recovered_note:
-          summaryRes.missed_calls_recovered_note ??
-          fallbackSummary.missed_calls_recovered_note ??
-          "",
-        active_clients_note:
-          summaryRes.active_clients_note ??
-          fallbackSummary.active_clients_note ??
-          "",
-      });
+      const { data: profileData, error: profileError } = await supabase
+        .from("profiles")
+        .select("id, email, full_name, global_role")
+        .eq("id", user.id)
+        .single();
 
-      setCallTrend(
-        Array.isArray(trendRes) && trendRes.length
-          ? trendRes.map((item: any) => ({
-              day: String(item.day ?? ""),
-              calls: Number(item.calls ?? 0),
-              booked: Number(item.booked ?? 0),
-            }))
-          : fallbackCallTrend
-      );
+      if (profileError) {
+        throw profileError;
+      }
 
-      setRecentCalls(
-        Array.isArray(callsRes) && callsRes.length
-          ? callsRes.map((item: any) => ({
-              id: String(
-                item.id ??
-                  item.call_id ??
-                  `${Date.now()}-${Math.random().toString(36).slice(2)}`
-              ),
-              caller: String(
-                item.caller ??
-                  item.caller_name ??
-                  item.first_name ??
-                  "Unknown Caller"
-              ),
-              number: String(item.number ?? item.caller_phone ?? ""),
-              tenant: String(item.tenant ?? item.tenant_name ?? "Unknown"),
-              tenant_id: item.tenant_id ? String(item.tenant_id) : undefined,
-              time: formatTime(item.time ?? item.created_at ?? item.started_at),
-              raw_time: String(item.time ?? item.created_at ?? item.started_at ?? ""),
-              duration: formatDuration(
-                item.duration_seconds ?? item.duration ?? null
-              ),
-              outcome: String(
-                item.outcome ?? item.qualification_status ?? "New lead"
-              ),
-              summary: String(item.summary ?? item.call_summary ?? "No summary"),
-            }))
-          : fallbackCalls
-      );
+      setProfile(profileData);
 
-      setLeads(
-        Array.isArray(leadsRes) && leadsRes.length
-          ? leadsRes.map((item: any) => ({
-              id: String(
-                item.id ??
-                  `${Date.now()}-${Math.random().toString(36).slice(2)}`
-              ),
-              name: String(
-                item.name ||
-                  [item.first_name, item.last_name].filter(Boolean).join(" ") ||
-                  "Unknown Lead"
-              ),
-              niche: String(item.niche ?? item.industry ?? "General"),
-              status: String(item.status ?? item.qualification_status ?? "New"),
-              business: String(
-                item.business ?? item.tenant_name ?? item.company_name ?? "Unknown"
-              ),
-              business_id: item.tenant_id ? String(item.tenant_id) : undefined,
-              issue: String(item.issue ?? item.summary ?? "No issue captured"),
-              next: String(item.next ?? item.next_action ?? "Needs follow-up"),
-            }))
-          : fallbackLeads
-      );
+      const { data: membershipData, error: membershipError } = await supabase
+        .from("tenant_memberships")
+        .select(`
+          id,
+          role,
+          tenant:tenants (
+            id,
+            tenant_key,
+            name,
+            display_name,
+            industry
+          )
+        `)
+        .order("created_at", { ascending: true });
 
-      setClients(
-        Array.isArray(tenantsRes) && tenantsRes.length
-          ? tenantsRes.map((item: any) => ({
-              id: String(item.id ?? `tenant-${Math.random().toString(36).slice(2)}`),
-              name: String(item.name ?? item.display_name ?? "Unknown client"),
-              phone: String(
-                item.phone ?? item.phone_number ?? item.primary_phone ?? "No number"
-              ),
-              status: String(
-                item.status ?? (item.is_active ? "Active" : "Inactive")
-              ),
-              calls: Number(item.calls ?? 0),
-              booked: Number(item.booked ?? 0),
-              recovered: Number(item.recovered ?? 0),
-              tenant_key: item.tenant_key ? String(item.tenant_key) : undefined,
-            }))
-          : fallbackClients
-      );
+      if (membershipError) {
+        throw membershipError;
+      }
 
-      setHealth({
-        voice_routing: String(
-          healthRes.voice_routing ?? fallbackHealth.voice_routing
-        ),
-        webhook_health: String(
-          healthRes.webhook_health ?? fallbackHealth.webhook_health
-        ),
-        email_delivery: String(
-          healthRes.email_delivery ?? fallbackHealth.email_delivery
-        ),
-        email_retries: Number(
-          healthRes.email_retries ?? fallbackHealth.email_retries ?? 0
-        ),
-        failures:
-          Array.isArray(healthRes.failures) && healthRes.failures.length
-            ? healthRes.failures.map((item: any) => ({
-                label: String(item.label ?? "Unknown issue"),
-                value: Number(item.value ?? 0),
-                tone: String(
-                  item.tone ??
-                    toneForFailure(
-                      String(item.label ?? ""),
-                      Number(item.value ?? 0)
-                    )
-                ),
-              }))
-            : fallbackHealth.failures,
-        onboarding_progress:
-          healthRes.onboarding_progress ?? fallbackHealth.onboarding_progress,
-      });
+      const normalizedMemberships = (membershipData || []) as unknown as Membership[];
+      setMemberships(normalizedMemberships);
 
-      setAnalytics(
-        Array.isArray(analyticsRes?.data) && analyticsRes.data.length
-          ? analyticsRes.data.map((item: any) => ({
-              bucket: String(item.bucket ?? ""),
-              total_calls: Number(item.total_calls ?? 0),
-              booked_calls: Number(item.booked_calls ?? 0),
-              qualified_calls: Number(item.qualified_calls ?? 0),
-              missed_calls: Number(item.missed_calls ?? 0),
-              book_rate: Number(item.book_rate ?? 0),
-            }))
-          : fallbackAnalytics
-      );
+      let tenantChoices: Tenant[] = normalizedMemberships
+        .map((m) => m.tenant)
+        .filter(Boolean) as Tenant[];
 
-      setConversionFunnel(
-        conversionRes?.ok ? conversionRes : fallbackConversionFunnel
-      );
-    } catch (err) {
+      if (profileData.global_role === "platform_admin") {
+        const { data: tenantData, error: tenantError } = await supabase
+          .from("tenants")
+          .select("id, tenant_key, name, display_name, industry")
+          .eq("is_active", true)
+          .order("created_at", { ascending: true });
+
+        if (tenantError) {
+          throw tenantError;
+        }
+
+        const adminTenantRows = (tenantData || []) as Tenant[];
+        setAdminTenants(adminTenantRows);
+        tenantChoices = adminTenantRows;
+      }
+
+      const params =
+        typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search)
+          : null;
+      const tenantIdFromUrl = params?.get("tenant_id") || "";
+      const tenantKeyFromUrl = params?.get("tenant_key") || "";
+
+      let resolvedTenantId = "";
+
+      if (tenantIdFromUrl && tenantChoices.some((t) => t.id === tenantIdFromUrl)) {
+        resolvedTenantId = tenantIdFromUrl;
+      } else if (tenantKeyFromUrl) {
+        const match = tenantChoices.find((t) => t.tenant_key === tenantKeyFromUrl);
+        if (match) resolvedTenantId = match.id;
+      }
+
+      if (!resolvedTenantId && tenantChoices.length > 0) {
+        resolvedTenantId = tenantChoices[0].id;
+      }
+
+      setSelectedTenantId(resolvedTenantId);
+    } catch (err: any) {
       console.error(err);
-      setError(
-        "Using fallback demo data because one or more dashboard endpoints are not live yet."
-      );
-      setSummary(fallbackSummary);
-      setCallTrend(fallbackCallTrend);
-      setRecentCalls(fallbackCalls);
-      setLeads(fallbackLeads);
-      setClients(fallbackClients);
-      setHealth(fallbackHealth);
-      setAnalytics(fallbackAnalytics);
-      setConversionFunnel(fallbackConversionFunnel);
+      setError(err?.message || "Failed to load workspace.");
     } finally {
       setLoading(false);
     }
   }
 
+  async function loadTenantData(tenantId: string) {
+    if (!tenantId) return;
+
+    setRefreshing(true);
+    setError("");
+
+    try {
+      const [contactsRes, dealsRes, tasksRes, callsRes] = await Promise.all([
+        supabase
+          .from("contacts")
+          .select("id, first_name, last_name, email, phone, company, created_at")
+          .eq("tenant_id", tenantId)
+          .order("created_at", { ascending: false })
+          .limit(200),
+
+        supabase
+          .from("deals")
+          .select(`
+            id,
+            title,
+            status,
+            source,
+            estimated_value,
+            probability,
+            created_at,
+            last_activity_at,
+            stage:pipeline_stages (
+              id,
+              name,
+              stage_key,
+              position
+            ),
+            contact:contacts (
+              id,
+              first_name,
+              last_name,
+              email,
+              phone
+            )
+          `)
+          .eq("tenant_id", tenantId)
+          .order("created_at", { ascending: false })
+          .limit(200),
+
+        supabase
+          .from("tasks")
+          .select(`
+            id,
+            title,
+            description,
+            status,
+            priority,
+            due_at,
+            created_at,
+            contact:contacts (
+              id,
+              first_name,
+              last_name,
+              email
+            )
+          `)
+          .eq("tenant_id", tenantId)
+          .order("due_at", { ascending: true })
+          .limit(200),
+
+        supabase
+          .from("calls")
+          .select(`
+            id,
+            external_call_id,
+            direction,
+            caller_phone,
+            caller_email,
+            called_number,
+            duration_seconds,
+            summary,
+            transcript,
+            outcome,
+            qualification_status,
+            created_at,
+            contact:contacts (
+              id,
+              first_name,
+              last_name,
+              email,
+              phone
+            )
+          `)
+          .eq("tenant_id", tenantId)
+          .order("created_at", { ascending: false })
+          .limit(300),
+      ]);
+
+      if (contactsRes.error) throw contactsRes.error;
+      if (dealsRes.error) throw dealsRes.error;
+      if (tasksRes.error) throw tasksRes.error;
+      if (callsRes.error) throw callsRes.error;
+
+      setContacts((contactsRes.data || []) as Contact[]);
+      setDeals((dealsRes.data || []) as unknown as Deal[]);
+      setTasks((tasksRes.data || []) as unknown as Task[]);
+      setCalls((callsRes.data || []) as unknown as Call[]);
+    } catch (err: any) {
+      console.error(err);
+      setError(err?.message || "Failed to load tenant data.");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   useEffect(() => {
-    loadDashboard();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantKeyFromUrl, range]);
+    loadBase();
+  }, []);
 
-  async function openCallDetail(callId: string) {
-    if (!callId) return;
-
-    setLoadingCallDetail(true);
-    setError("");
-
-    try {
-      const res = await fetch(withTenantScope(`/api/calls/${callId}`), {
-        headers: buildHeaders(),
-      });
-      const data = await res.json();
-
-      if (!res.ok || !data.ok || !data.call) {
-        throw new Error(data.detail || data.error || "Failed to load call detail");
-      }
-
-      setSelectedCall(data.call);
-      setShowCallModal(true);
-    } catch (err) {
-      console.error(err);
-      setError("Could not load call detail.");
-    } finally {
-      setLoadingCallDetail(false);
+  useEffect(() => {
+    if (selectedTenantId) {
+      loadTenantData(selectedTenantId);
     }
-  }
-
-  async function handleExport(dataset: "calls" | "leads" | "dashboard") {
-    try {
-      const res = await fetch(
-        withTenantScope("/api/data/export", `dataset=${dataset}&format=json`),
-        { headers: buildHeaders() }
-      );
-      if (!res.ok) {
-        throw new Error("Failed export");
-      }
-      const data = await res.json();
-
-      const rows = Array.isArray(data) ? data : [data];
-      downloadCsv(
-        `${tenantKeyFromUrl || "agency"}-${dataset}.csv`,
-        rows.map((row: any) =>
-          typeof row === "object" && row !== null ? row : { value: row }
-        )
-      );
-    } catch (err) {
-      console.error(err);
-      setError(`Could not export ${dataset}.`);
-    }
-  }
-
-  async function handleUploadSeedData(
-    event: React.ChangeEvent<HTMLInputElement>
-  ) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setUploading(true);
-    setError("");
-
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const tenantParam =
-        tenantKeyFromUrl || clients.find((c) => c.id === tenant)?.tenant_key;
-
-      const qs = tenantParam ? `tenant_key=${encodeURIComponent(tenantParam)}` : "";
-      const res = await fetch(
-        `${API_BASE_URL}/api/data/upload${qs ? `?${qs}` : ""}`,
-        {
-          method: "POST",
-          headers: buildHeaders(),
-          body: formData,
-        }
-      );
-
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        throw new Error(data.detail || data.error || "Upload failed");
-      }
-
-      await loadDashboard();
-    } catch (err) {
-      console.error(err);
-      setError("Could not upload seed data.");
-    } finally {
-      setUploading(false);
-      event.target.value = "";
-    }
-  }
+  }, [selectedTenantId]);
 
   const filteredCalls = useMemo(() => {
-    return recentCalls.filter((c) => {
-      const matchesTenant =
-        tenant === "all" ||
-        c.tenant_id === tenant ||
-        c.tenant.toLowerCase() === tenant.toLowerCase();
-
-      const q = search.toLowerCase();
-      const matchesSearch =
-        !q ||
-        [c.caller, c.number, c.tenant, c.summary]
-          .join(" ")
-          .toLowerCase()
-          .includes(q);
-
-      return matchesTenant && matchesSearch;
-    });
-  }, [recentCalls, tenant, search]);
-
-  const filteredLeads = useMemo(() => {
-    return leads.filter((lead) => {
-      const matchesTenant =
-        tenant === "all" ||
-        lead.business_id === tenant ||
-        lead.business.toLowerCase() === tenant.toLowerCase();
-
-      const q = search.toLowerCase();
-      const matchesSearch =
-        !q ||
-        [lead.name, lead.business, lead.issue, lead.status]
-          .join(" ")
-          .toLowerCase()
-          .includes(q);
-
-      return matchesTenant && matchesSearch;
-    });
-  }, [leads, tenant, search]);
-
-  const visibleClients = useMemo(() => {
-    if (tenant === "all") return clients;
-    return clients.filter(
-      (client) =>
-        client.id === tenant ||
-        client.name.toLowerCase() === tenant.toLowerCase()
+    const q = search.toLowerCase();
+    return calls.filter((call) =>
+      !q
+        ? true
+        : [
+            fullName(call.contact?.first_name, call.contact?.last_name, ""),
+            call.caller_phone,
+            call.caller_email,
+            call.summary,
+            call.outcome,
+            call.qualification_status,
+          ]
+            .join(" ")
+            .toLowerCase()
+            .includes(q)
     );
-  }, [clients, tenant]);
+  }, [calls, search]);
 
-  const analyticsChartData = useMemo(() => {
-    return analytics.map((item) => ({
-      ...item,
-      label: formatBucketLabel(item.bucket),
+  const filteredDeals = useMemo(() => {
+    const q = search.toLowerCase();
+    return deals.filter((deal) =>
+      !q
+        ? true
+        : [
+            deal.title,
+            deal.status,
+            deal.source,
+            deal.stage?.name,
+            deal.stage?.stage_key,
+            fullName(deal.contact?.first_name, deal.contact?.last_name, ""),
+            deal.contact?.email,
+          ]
+            .join(" ")
+            .toLowerCase()
+            .includes(q)
+    );
+  }, [deals, search]);
+
+  const filteredTasks = useMemo(() => {
+    const q = search.toLowerCase();
+    return tasks.filter((task) =>
+      !q
+        ? true
+        : [
+            task.title,
+            task.description,
+            task.status,
+            task.priority,
+            fullName(task.contact?.first_name, task.contact?.last_name, ""),
+            task.contact?.email,
+          ]
+            .join(" ")
+            .toLowerCase()
+            .includes(q)
+    );
+  }, [tasks, search]);
+
+  const filteredContacts = useMemo(() => {
+    const q = search.toLowerCase();
+    return contacts.filter((contact) =>
+      !q
+        ? true
+        : [
+            fullName(contact.first_name, contact.last_name, ""),
+            contact.email,
+            contact.phone,
+            contact.company,
+          ]
+            .join(" ")
+            .toLowerCase()
+            .includes(q)
+    );
+  }, [contacts, search]);
+
+  const metrics = useMemo(() => {
+    const today = startOfToday();
+
+    const totalContacts = contacts.length;
+    const openDeals = deals.filter((deal) => deal.status === "open").length;
+    const pipelineValue = deals.reduce(
+      (sum, deal) => sum + Number(deal.estimated_value || 0),
+      0
+    );
+    const tasksDue = tasks.filter(
+      (task) => task.status === "open" && task.due_at && new Date(task.due_at) >= today
+    ).length;
+    const callsToday = calls.filter((call) => new Date(call.created_at) >= today).length;
+
+    return {
+      totalContacts,
+      openDeals,
+      pipelineValue,
+      tasksDue,
+      callsToday,
+    };
+  }, [contacts, deals, tasks, calls]);
+
+  const callTrend = useMemo(() => {
+    const map = new Map<string, { day: string; calls: number; booked: number }>();
+    const now = new Date();
+
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(now.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      map.set(key, {
+        day: d.toLocaleDateString([], { month: "short", day: "numeric" }),
+        calls: 0,
+        booked: 0,
+      });
+    }
+
+    for (const call of calls) {
+      const key = new Date(call.created_at).toISOString().slice(0, 10);
+      if (map.has(key)) {
+        const row = map.get(key)!;
+        row.calls += 1;
+        if ((call.outcome || "").toLowerCase().includes("book")) {
+          row.booked += 1;
+        }
+      }
+    }
+
+    return Array.from(map.values());
+  }, [calls]);
+
+  const pipelineChart = useMemo(() => {
+    const stageCounts = new Map<string, number>();
+    for (const deal of deals) {
+      const label = deal.stage?.name || deal.stage?.stage_key || "Unknown";
+      stageCounts.set(label, (stageCounts.get(label) || 0) + 1);
+    }
+    return Array.from(stageCounts.entries()).map(([stage, count]) => ({
+      stage,
+      count,
     }));
-  }, [analytics]);
+  }, [deals]);
 
   const summaryCards = [
     {
+      title: "Contacts",
+      value: metrics.totalContacts,
+      note: "People and prospects in this workspace",
+      icon: Users,
+    },
+    {
+      title: "Open deals",
+      value: metrics.openDeals,
+      note: "Active opportunities in pipeline",
+      icon: Briefcase,
+    },
+    {
+      title: "Pipeline value",
+      value: formatCurrency(metrics.pipelineValue),
+      note: "Estimated value of open work",
+      icon: TrendingUp,
+    },
+    {
       title: "Calls today",
-      value: summary.calls_today,
-      note: summary.calls_today_note || "",
+      value: metrics.callsToday,
+      note: "Inbound and outbound activity today",
       icon: PhoneCall,
-    },
-    {
-      title: "Booked meetings",
-      value: summary.booked_meetings,
-      note: summary.booked_meetings_note || "",
-      icon: CalendarDays,
-    },
-    {
-      title: "Missed calls recovered",
-      value: summary.missed_calls_recovered,
-      note: summary.missed_calls_recovered_note || "",
-      icon: BadgeCheck,
-    },
-    {
-      title: "Active clients",
-      value: summary.active_clients,
-      note: summary.active_clients_note || "",
-      icon: Building2,
     },
   ];
 
-  const selectedTenantKeyForProvisioning =
-    tenantKeyFromUrl || clients.find((c) => c.id === tenant)?.tenant_key || "";
+  const initials = useMemo(() => {
+    const name = profile?.full_name || profile?.email || "EE";
+    return name
+      .split(" ")
+      .map((s) => s[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase();
+  }, [profile]);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
-      {showCallModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
-          <div className="w-full max-w-4xl rounded-3xl border border-slate-200 bg-white shadow-2xl">
-            <div className="flex items-start justify-between border-b border-slate-200 p-6">
-              <div>
-                <h3 className="text-xl font-semibold text-slate-950">
-                  {selectedCall?.caller_name || "Call detail"}
-                </h3>
-                <p className="mt-1 text-sm text-slate-500">
-                  {selectedCall?.tenant_name || "—"} •{" "}
-                  {formatDateTime(selectedCall?.time)}
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                className="rounded-2xl"
-                onClick={() => setShowCallModal(false)}
-              >
-                <X className="mr-2 h-4 w-4" />
-                Close
-              </Button>
-            </div>
-
-            <div className="space-y-6 p-6">
-              <div className="grid gap-4 md:grid-cols-4">
-                <Card className="rounded-2xl border-slate-200 shadow-none">
-                  <CardContent className="p-4">
-                    <div className="text-sm text-slate-500">Outcome</div>
-                    <div className="mt-2 font-semibold text-slate-900">
-                      {selectedCall?.outcome || "—"}
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="rounded-2xl border-slate-200 shadow-none">
-                  <CardContent className="p-4">
-                    <div className="text-sm text-slate-500">Caller phone</div>
-                    <div className="mt-2 font-semibold text-slate-900">
-                      {selectedCall?.caller_phone || "—"}
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="rounded-2xl border-slate-200 shadow-none">
-                  <CardContent className="p-4">
-                    <div className="text-sm text-slate-500">Business</div>
-                    <div className="mt-2 font-semibold text-slate-900">
-                      {selectedCall?.business_name || "—"}
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="rounded-2xl border-slate-200 shadow-none">
-                  <CardContent className="p-4">
-                    <div className="text-sm text-slate-500">Line</div>
-                    <div className="mt-2 font-semibold text-slate-900">
-                      {selectedCall?.tenant_phone_label || "—"}
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 p-4">
-                <div className="flex items-center gap-2 text-sm font-medium text-slate-900">
-                  <CheckCircle2 className="h-4 w-4" />
-                  AI Summary
-                </div>
-                <div className="mt-3 whitespace-pre-wrap text-sm text-slate-600">
-                  {selectedCall?.summary || "No summary available."}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 p-4">
-                <div className="flex items-center gap-2 text-sm font-medium text-slate-900">
-                  <FileText className="h-4 w-4" />
-                  Transcript
-                </div>
-                <div className="mt-3 max-h-[340px] overflow-y-auto whitespace-pre-wrap rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
-                  {selectedCall?.transcript || "No transcript available."}
-                </div>
-              </div>
-
-              {selectedCall?.payload ? (
-                <div className="rounded-2xl border border-slate-200 p-4">
-                  <div className="text-sm font-medium text-slate-900">
-                    Raw payload
-                  </div>
-                  <pre className="mt-3 max-h-[260px] overflow-auto rounded-2xl bg-slate-950 p-4 text-xs text-slate-100">
-                    {JSON.stringify(selectedCall.payload, null, 2)}
-                  </pre>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="grid min-h-screen lg:grid-cols-[260px_1fr]">
         <aside className="border-r border-slate-200 bg-white">
           <div className="flex h-16 items-center px-6">
@@ -1220,7 +713,7 @@ export default function ConfluxaFrontendPrototype() {
               />
               <div>
                 <div className="font-semibold">Confluxa</div>
-                <div className="text-xs text-slate-500">Operations Console</div>
+                <div className="text-xs text-slate-500">Tenant Workspace</div>
               </div>
             </div>
           </div>
@@ -1248,35 +741,29 @@ export default function ConfluxaFrontendPrototype() {
             <Card className="rounded-3xl border-slate-200/80 bg-slate-900 text-white shadow-sm">
               <CardContent className="p-5">
                 <div className="flex items-center gap-3">
-                  <Headphones className="h-5 w-5" />
-                  <div className="font-medium">Live system status</div>
+                  <Building2 className="h-5 w-5" />
+                  <div className="font-medium">Active workspace</div>
                 </div>
-                <div className="mt-4 space-y-3 text-sm text-slate-200">
-                  <div className="flex items-center justify-between">
-                    <span>Voice routing</span>
-                    <Badge className="bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/20">
-                      {health.voice_routing}
-                    </Badge>
+
+                <div className="mt-4 space-y-2 text-sm text-slate-200">
+                  <div className="font-medium text-white">
+                    {selectedTenant?.display_name || selectedTenant?.name || "No tenant selected"}
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span>Webhook health</span>
-                    <Badge className="bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/20">
-                      {health.webhook_health}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Email delivery</span>
-                    <Badge className="bg-amber-500/20 text-amber-100 hover:bg-amber-500/20">
-                      {health.email_delivery}
-                    </Badge>
+                  <div>{selectedTenant?.industry || "General"}</div>
+                  <div className="text-slate-300">
+                    {profile?.global_role === "platform_admin"
+                      ? "Platform admin access"
+                      : "Tenant-scoped access"}
                   </div>
                 </div>
+
                 <Button
                   className="mt-5 w-full rounded-2xl bg-white text-slate-900 hover:bg-slate-100"
-                  onClick={loadDashboard}
+                  onClick={() => selectedTenantId && loadTenantData(selectedTenantId)}
+                  disabled={refreshing || !selectedTenantId}
                 >
                   <RefreshCcw className="mr-2 h-4 w-4" />
-                  Refresh
+                  {refreshing ? "Refreshing..." : "Refresh"}
                 </Button>
               </CardContent>
             </Card>
@@ -1288,12 +775,13 @@ export default function ConfluxaFrontendPrototype() {
             <div className="flex flex-col gap-4 px-6 py-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h1 className="text-2xl font-semibold tracking-tight">
-                  Confluxa Control Room
+                  {selectedTenant?.display_name || selectedTenant?.name || "Dashboard"}
                 </h1>
                 <p className="text-sm text-slate-500">
-                  Run clients, monitor calls, and prove ROI from one place.
+                  Real calls, deals, tasks, and contacts from your live Supabase workspace.
                 </p>
               </div>
+
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <div className="relative min-w-[260px]">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -1301,37 +789,24 @@ export default function ConfluxaFrontendPrototype() {
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     className="rounded-2xl border-slate-200 pl-9"
-                    placeholder="Search calls, tenants, leads"
+                    placeholder="Search records"
                   />
                 </div>
 
-                <Select value={tenant} onValueChange={setTenant}>
-                  <SelectTrigger className="w-[220px] rounded-2xl border-slate-200">
-                    <SelectValue placeholder="Tenant" />
+                <Select value={selectedTenantId} onValueChange={setSelectedTenantId}>
+                  <SelectTrigger className="w-[260px] rounded-2xl border-slate-200">
+                    <SelectValue placeholder="Select tenant" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All tenants</SelectItem>
-                    {clients.map((client) => (
-                      <SelectItem key={client.id} value={client.id}>
-                        {client.name}
+                    {tenantOptions.map((tenant) => (
+                      <SelectItem key={tenant.id} value={tenant.id}>
+                        {tenant.display_name || tenant.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
 
-                <Button
-                  className="rounded-2xl bg-slate-900 hover:bg-slate-800"
-                  onClick={() => window.open(ADMIN_BASE_URL, "_blank")}
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  New client
-                </Button>
-
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="rounded-2xl border-slate-200"
-                >
+                <Button variant="outline" size="icon" className="rounded-2xl border-slate-200">
                   <Bell className="h-4 w-4" />
                 </Button>
 
@@ -1341,12 +816,13 @@ export default function ConfluxaFrontendPrototype() {
                     className="rounded-2xl border-slate-200"
                     onClick={handleLogout}
                   >
+                    <LogOut className="mr-2 h-4 w-4" />
                     Logout
                   </Button>
 
                   <Avatar className="h-10 w-10 rounded-2xl">
                     <AvatarFallback className="rounded-2xl bg-orange-100 text-orange-900">
-                      EE
+                      {initials}
                     </AvatarFallback>
                   </Avatar>
                 </div>
@@ -1356,93 +832,47 @@ export default function ConfluxaFrontendPrototype() {
 
           <div className="space-y-8 px-6 py-6">
             {error ? (
-              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
                 {error}
               </div>
             ) : null}
 
             {loading ? (
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
-                Loading dashboard data...
+                Loading dashboard...
               </div>
             ) : null}
 
-            {page === "dashboard" && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="space-y-8"
-              >
+            {!loading && !selectedTenantId ? (
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                No tenant is available for this user yet.
+              </div>
+            ) : null}
+
+            {!loading && selectedTenantId && page === "overview" && (
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                   {summaryCards.map((card) => (
                     <StatCard key={card.title} {...card} />
                   ))}
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-3">
-                  <StatCard
-                    title="Total leads"
-                    value={conversionFunnel.total_leads}
-                    note="All captured leads"
-                    icon={Users}
-                  />
-                  <StatCard
-                    title="Lead → Booked"
-                    value={`${conversionFunnel.conversion.lead_to_booked_pct}%`}
-                    note="Overall booking conversion"
-                    icon={TrendingUp}
-                  />
-                  <StatCard
-                    title="Qualified → Booked"
-                    value={`${conversionFunnel.conversion.qualified_to_booked_pct}%`}
-                    note="High-intent conversion"
-                    icon={CheckCircle2}
-                  />
-                </div>
-
                 <div className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
                   <Card className="rounded-3xl border-slate-200/80 shadow-sm">
                     <CardHeader>
-                      <SectionTitle
-                        title="Call performance"
-                        description="Calls and bookings over time for the selected window."
-                        action={
-                          <Tabs
-                            value={range}
-                            onValueChange={(value) =>
-                              setRange(value as "7d" | "30d")
-                            }
-                          >
-                            <TabsList className="rounded-2xl bg-slate-100">
-                              <TabsTrigger value="7d">7D</TabsTrigger>
-                              <TabsTrigger value="30d">30D</TabsTrigger>
-                            </TabsList>
-                          </Tabs>
-                        }
-                      />
+                      <CardTitle>Call trend</CardTitle>
+                      <CardDescription>Calls and booked outcomes over the last 7 days.</CardDescription>
                     </CardHeader>
                     <CardContent>
                       <div className="h-[300px]">
                         <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={analyticsChartData}>
+                          <LineChart data={callTrend}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                            <XAxis dataKey="label" />
+                            <XAxis dataKey="day" />
                             <YAxis />
                             <Tooltip />
-                            <Line
-                              type="monotone"
-                              dataKey="total_calls"
-                              strokeWidth={4}
-                              dot={false}
-                              name="Calls"
-                            />
-                            <Line
-                              type="monotone"
-                              dataKey="booked_calls"
-                              strokeWidth={4}
-                              dot={false}
-                              name="Booked"
-                            />
+                            <Line type="monotone" dataKey="calls" strokeWidth={4} dot={false} />
+                            <Line type="monotone" dataKey="booked" strokeWidth={4} dot={false} />
                           </LineChart>
                         </ResponsiveContainer>
                       </div>
@@ -1451,83 +881,43 @@ export default function ConfluxaFrontendPrototype() {
 
                   <Card className="rounded-3xl border-slate-200/80 shadow-sm">
                     <CardHeader>
-                      <CardTitle>System attention</CardTitle>
-                      <CardDescription>
-                        Items that need review before they affect client experience.
-                      </CardDescription>
+                      <CardTitle>Tasks due</CardTitle>
+                      <CardDescription>Follow-up items that need attention.</CardDescription>
                     </CardHeader>
-                    <CardContent className="space-y-4">
-                      {(health.failures ?? fallbackFailures).map((item) => (
-                        <div
-                          key={item.label}
-                          className="flex items-center justify-between rounded-2xl border border-slate-200 p-4"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="rounded-xl bg-slate-100 p-2">
-                              <AlertTriangle className="h-4 w-4" />
+                    <CardContent className="space-y-3">
+                      {filteredTasks.slice(0, 5).length ? (
+                        filteredTasks.slice(0, 5).map((task) => (
+                          <div key={task.id} className="rounded-2xl border border-slate-200 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="font-medium">{task.title}</div>
+                                <div className="text-sm text-slate-500">
+                                  {fullName(task.contact?.first_name, task.contact?.last_name, "Unassigned contact")}
+                                </div>
+                              </div>
+                              <Badge variant="secondary">{task.priority}</Badge>
                             </div>
-                            <div>
-                              <div className="font-medium">{item.label}</div>
-                              <div className="text-sm text-slate-500">Last 24 hours</div>
+                            <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+                              <Clock3 className="h-3.5 w-3.5" />
+                              Due {formatDateTime(task.due_at)}
                             </div>
                           </div>
-                          <Badge className={item.tone}>{item.value}</Badge>
+                        ))
+                      ) : (
+                        <div className="rounded-2xl border border-slate-200 p-4 text-sm text-slate-500">
+                          No open tasks yet.
                         </div>
-                      ))}
-
-                      {health.onboarding_progress ? (
-                        <div className="rounded-2xl bg-slate-100 p-4">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <div className="font-medium">
-                                {health.onboarding_progress.label}
-                              </div>
-                              <div className="text-sm text-slate-500">
-                                {health.onboarding_progress.description}
-                              </div>
-                            </div>
-                            <Briefcase className="h-5 w-5 text-slate-500" />
-                          </div>
-                          <Progress
-                            value={health.onboarding_progress.percent}
-                            className="mt-4"
-                          />
-                        </div>
-                      ) : null}
+                      )}
                     </CardContent>
                   </Card>
                 </div>
-
-                <Card className="rounded-3xl border-slate-200/80 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Lead conversion tracking</CardTitle>
-                    <CardDescription>
-                      Follow how leads move from new to booked and won.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                      {conversionFunnel.stages.map((stage) => (
-                        <div
-                          key={stage.stage}
-                          className="rounded-2xl border border-slate-200 p-4"
-                        >
-                          <div className="text-sm text-slate-500">{stage.stage}</div>
-                          <div className="mt-2 text-2xl font-semibold text-slate-900">
-                            {stage.count}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
 
                 <div className="grid gap-6 xl:grid-cols-[1.35fr_1fr]">
                   <Card className="rounded-3xl border-slate-200/80 shadow-sm">
                     <CardHeader>
                       <SectionTitle
                         title="Recent calls"
-                        description="Live view of incoming conversations across tenants."
+                        description="Latest conversation activity in this workspace."
                         action={
                           <Button
                             variant="outline"
@@ -1544,37 +934,35 @@ export default function ConfluxaFrontendPrototype() {
                         <TableHeader>
                           <TableRow>
                             <TableHead>Caller</TableHead>
-                            <TableHead>Tenant</TableHead>
                             <TableHead>Time</TableHead>
                             <TableHead>Outcome</TableHead>
                             <TableHead>Summary</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {filteredCalls.map((call) => (
-                            <TableRow
-                              key={call.id}
-                              className="cursor-pointer"
-                              onClick={() => openCallDetail(call.id)}
-                            >
+                          {filteredCalls.slice(0, 8).map((call) => (
+                            <TableRow key={call.id}>
                               <TableCell>
-                                <div className="font-medium">{call.caller}</div>
-                                <div className="text-xs text-slate-500">{call.number}</div>
-                              </TableCell>
-                              <TableCell>{call.tenant}</TableCell>
-                              <TableCell>
-                                <div>{call.time}</div>
+                                <div className="font-medium">
+                                  {fullName(call.contact?.first_name, call.contact?.last_name, "Unknown Caller")}
+                                </div>
                                 <div className="text-xs text-slate-500">
-                                  {call.duration}
+                                  {call.caller_phone || call.caller_email || "—"}
                                 </div>
                               </TableCell>
                               <TableCell>
-                                <Badge variant="secondary" className="rounded-full">
-                                  {call.outcome}
+                                <div>{formatTime(call.created_at)}</div>
+                                <div className="text-xs text-slate-500">
+                                  {formatDuration(call.duration_seconds)}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant="secondary">
+                                  {call.outcome || call.qualification_status || "New"}
                                 </Badge>
                               </TableCell>
                               <TableCell className="max-w-[320px] truncate">
-                                {call.summary}
+                                {call.summary || "No summary"}
                               </TableCell>
                             </TableRow>
                           ))}
@@ -1585,70 +973,32 @@ export default function ConfluxaFrontendPrototype() {
 
                   <Card className="rounded-3xl border-slate-200/80 shadow-sm">
                     <CardHeader>
-                      <CardTitle>Lead pipeline</CardTitle>
-                      <CardDescription>
-                        What the business owner wants to see at a glance.
-                      </CardDescription>
+                      <CardTitle>Pipeline stages</CardTitle>
+                      <CardDescription>Open deal distribution by stage.</CardDescription>
                     </CardHeader>
-                    <CardContent className="space-y-3">
-                      {filteredLeads.slice(0, 4).map((lead) => (
-                        <div
-                          key={lead.id}
-                          className="rounded-2xl border border-slate-200 p-4"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <div className="font-medium">{lead.name}</div>
-                              <div className="text-sm text-slate-500">
-                                {lead.business}
-                              </div>
-                            </div>
-                            <Badge variant="secondary" className="rounded-full">
-                              {lead.status}
-                            </Badge>
-                          </div>
-                          <div className="mt-3 text-sm text-slate-600">
-                            {lead.issue}
-                          </div>
-                          <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
-                            <Clock3 className="h-3.5 w-3.5" />
-                            {lead.next}
-                          </div>
-                        </div>
-                      ))}
+                    <CardContent>
+                      <div className="h-[280px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={pipelineChart}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                            <XAxis dataKey="stage" />
+                            <YAxis />
+                            <Tooltip />
+                            <Bar dataKey="count" radius={[8, 8, 0, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
                     </CardContent>
                   </Card>
                 </div>
               </motion.div>
             )}
 
-            {page === "calls" && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="space-y-6"
-              >
+            {!loading && selectedTenantId && page === "calls" && (
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                 <SectionTitle
                   title="Calls"
-                  description="Every call, transcript, and outcome in one operational view."
-                  action={
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        className="rounded-2xl border-slate-200"
-                      >
-                        <Filter className="mr-2 h-4 w-4" />
-                        Filter
-                      </Button>
-                      <Button
-                        className="rounded-2xl bg-slate-900 hover:bg-slate-800"
-                        onClick={() => handleExport("calls")}
-                      >
-                        <Download className="mr-2 h-4 w-4" />
-                        Export
-                      </Button>
-                    </div>
-                  }
+                  description="Every call record in this tenant workspace."
                 />
                 <Card className="rounded-3xl border-slate-200/80 shadow-sm">
                   <CardContent className="p-0">
@@ -1656,39 +1006,32 @@ export default function ConfluxaFrontendPrototype() {
                       <TableHeader>
                         <TableRow>
                           <TableHead>Caller</TableHead>
-                          <TableHead>Client</TableHead>
                           <TableHead>Date / time</TableHead>
                           <TableHead>Duration</TableHead>
                           <TableHead>Outcome</TableHead>
-                          <TableHead>Transcript summary</TableHead>
-                          <TableHead>Follow-up</TableHead>
+                          <TableHead>Summary</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {filteredCalls.map((call) => (
-                          <TableRow key={`${call.id}-calls`}>
+                          <TableRow key={call.id}>
                             <TableCell>
-                              <div className="font-medium">{call.caller}</div>
-                              <div className="text-xs text-slate-500">{call.number}</div>
+                              <div className="font-medium">
+                                {fullName(call.contact?.first_name, call.contact?.last_name, "Unknown Caller")}
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                {call.caller_phone || call.caller_email || "—"}
+                              </div>
                             </TableCell>
-                            <TableCell>{call.tenant}</TableCell>
-                            <TableCell>{call.time}</TableCell>
-                            <TableCell>{call.duration}</TableCell>
+                            <TableCell>{formatDateTime(call.created_at)}</TableCell>
+                            <TableCell>{formatDuration(call.duration_seconds)}</TableCell>
                             <TableCell>
-                              <Badge variant="secondary">{call.outcome}</Badge>
+                              <Badge variant="secondary">
+                                {call.outcome || call.qualification_status || "New"}
+                              </Badge>
                             </TableCell>
-                            <TableCell className="max-w-[340px] truncate">
-                              {call.summary}
-                            </TableCell>
-                            <TableCell>
-                              <Button
-                                variant="outline"
-                                className="rounded-2xl border-slate-200"
-                                onClick={() => openCallTranscript(call.id)}
-                              >
-                                <Eye className="mr-2 h-4 w-4" />
-                                Open
-                              </Button>
+                            <TableCell className="max-w-[360px] truncate">
+                              {call.summary || "No summary"}
                             </TableCell>
                           </TableRow>
                         ))}
@@ -1699,308 +1042,209 @@ export default function ConfluxaFrontendPrototype() {
               </motion.div>
             )}
 
-            {page === "leads" && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="space-y-6"
-              >
+            {!loading && selectedTenantId && page === "deals" && (
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                 <SectionTitle
-                  title="Leads"
-                  description="Captured from calls and ready for follow-up."
-                  action={
-                    <Button
-                      className="rounded-2xl bg-slate-900 hover:bg-slate-800"
-                      onClick={() => handleExport("leads")}
-                    >
-                      <Download className="mr-2 h-4 w-4" />
-                      Export leads
-                    </Button>
-                  }
+                  title="Deals"
+                  description="Live opportunity pipeline for this tenant."
                 />
-                <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
-                  {filteredLeads.map((lead) => (
-                    <Card
-                      key={lead.id}
-                      className="rounded-3xl border-slate-200/80 shadow-sm"
-                    >
-                      <CardContent className="p-5">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="font-medium">{lead.name}</div>
-                            <div className="text-sm text-slate-500">
-                              {lead.business}
-                            </div>
-                          </div>
-                          <Badge variant="secondary">{lead.status}</Badge>
-                        </div>
-                        <div className="mt-4 text-sm text-slate-600">
-                          {lead.issue}
-                        </div>
-                        <div className="mt-4 flex items-center gap-2 text-xs text-slate-500">
-                          <Activity className="h-3.5 w-3.5" />
-                          {lead.niche}
-                        </div>
-                        <div className="mt-5 flex items-center justify-between">
-                          <span className="text-xs text-slate-500">{lead.next}</span>
-                          <Button variant="ghost" className="rounded-2xl">
-                            View <ChevronRight className="ml-1 h-4 w-4" />
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-
-            {page === "clients" && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="space-y-6"
-              >
-                <SectionTitle
-                  title="Clients"
-                  description="Manage tenants, phone lines, performance in one place."
-                  action={
-                    <div className="flex gap-2">
-                      <label className="inline-flex cursor-pointer items-center">
-                        <input
-                          type="file"
-                          className="hidden"
-                          accept=".csv,.json"
-                          onChange={handleUploadSeedData}
-                          disabled={uploading}
-                        />
-                        <span className="inline-flex items-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50">
-                          <Upload className="mr-2 h-4 w-4" />
-                          {uploading ? "Uploading..." : "Upload seed data"}
-                        </span>
-                      </label>
-                      <Button
-                        className="rounded-2xl bg-slate-900 hover:bg-slate-800"
-                        onClick={() => window.open(ADMIN_BASE_URL, "_blank")}
-                      >
-                        <ExternalLink className="mr-2 h-4 w-4" />
-                        Open Admin
-                      </Button>
-                    </div>
-                  }
-                />
-                <div className="grid gap-6 xl:grid-cols-[1.2fr_1fr]">
-                  <Card className="rounded-3xl border-slate-200/80 shadow-sm">
-                    <CardContent className="p-0">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Client</TableHead>
-                            <TableHead>Phone</TableHead>
-                            <TableHead>Status</TableHead>
-                            <TableHead>Calls</TableHead>
-                            <TableHead>Booked</TableHead>
-                            <TableHead>Recovered</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {visibleClients.map((client) => (
-                            <TableRow key={client.id}>
-                              <TableCell className="font-medium">
-                                {client.name}
-                              </TableCell>
-                              <TableCell>{client.phone}</TableCell>
-                              <TableCell>
-                                <Badge variant="secondary">{client.status}</Badge>
-                              </TableCell>
-                              <TableCell>{client.calls}</TableCell>
-                              <TableCell>{client.booked}</TableCell>
-                              <TableCell>{client.recovered}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </CardContent>
-                  </Card>
-
-                  <Card className="rounded-3xl border-slate-200/80 shadow-sm">
-                    <CardHeader>
-                      <CardTitle>Client health snapshot</CardTitle>
-                      <CardDescription>
-                        Show this view in demos to make Confluxa feel premium.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="h-[260px]">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={visibleClients}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                            <XAxis dataKey="name" hide />
-                            <YAxis />
-                            <Tooltip />
-                            <Bar dataKey="calls" radius={[8, 8, 0, 0]} />
-                            <Bar dataKey="booked" radius={[8, 8, 0, 0]} />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-
                 <Card className="rounded-3xl border-slate-200/80 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Admin tenant provisioning</CardTitle>
-                    <CardDescription>
-                      Provisioning checklist for onboarding a client properly.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                      {[
-                        {
-                          title: "Tenant selected",
-                          done: !!selectedTenantKeyForProvisioning,
-                          note: selectedTenantKeyForProvisioning || "Choose a tenant",
-                        },
-                        {
-                          title: "Phone line mapped",
-                          done: visibleClients.length > 0,
-                          note: "Verify Twilio / Vapi number",
-                        },
-                        {
-                          title: "Seed data loaded",
-                          done: recentCalls.length > 0,
-                          note: "Upload CSV or JSON if needed",
-                        },
-                        {
-                          title: "Dashboard live",
-                          done: true,
-                          note: "Client view is available",
-                        },
-                      ].map((item) => (
-                        <div
-                          key={item.title}
-                          className="rounded-2xl border border-slate-200 p-4"
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="text-sm font-medium text-slate-900">
-                              {item.title}
-                            </div>
-                            {item.done ? (
-                              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                            ) : (
-                              <AlertTriangle className="h-4 w-4 text-amber-600" />
-                            )}
-                          </div>
-                          <div className="mt-2 text-sm text-slate-500">
-                            {item.note}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                  <CardContent className="p-0">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Title</TableHead>
+                          <TableHead>Contact</TableHead>
+                          <TableHead>Stage</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Value</TableHead>
+                          <TableHead>Probability</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredDeals.map((deal) => (
+                          <TableRow key={deal.id}>
+                            <TableCell className="font-medium">{deal.title}</TableCell>
+                            <TableCell>
+                              {fullName(deal.contact?.first_name, deal.contact?.last_name, "—")}
+                            </TableCell>
+                            <TableCell>{deal.stage?.name || deal.stage?.stage_key || "—"}</TableCell>
+                            <TableCell>
+                              <Badge variant="secondary">{deal.status}</Badge>
+                            </TableCell>
+                            <TableCell>{formatCurrency(deal.estimated_value)}</TableCell>
+                            <TableCell>{deal.probability ?? 0}%</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </CardContent>
                 </Card>
               </motion.div>
             )}
 
-            {page === "settings" && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="space-y-6"
-              >
+            {!loading && selectedTenantId && page === "tasks" && (
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+                <SectionTitle
+                  title="Tasks"
+                  description="Follow-up and operational tasks for this tenant."
+                />
+                <Card className="rounded-3xl border-slate-200/80 shadow-sm">
+                  <CardContent className="p-0">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Title</TableHead>
+                          <TableHead>Contact</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Priority</TableHead>
+                          <TableHead>Due</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredTasks.map((task) => (
+                          <TableRow key={task.id}>
+                            <TableCell>
+                              <div className="font-medium">{task.title}</div>
+                              <div className="text-xs text-slate-500 truncate max-w-[320px]">
+                                {task.description || "—"}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              {fullName(task.contact?.first_name, task.contact?.last_name, "—")}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="secondary">{task.status}</Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{task.priority}</Badge>
+                            </TableCell>
+                            <TableCell>{formatDateTime(task.due_at)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
+
+            {!loading && selectedTenantId && page === "contacts" && (
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+                <SectionTitle
+                  title="Contacts"
+                  description="People and businesses associated with this tenant."
+                />
+                <Card className="rounded-3xl border-slate-200/80 shadow-sm">
+                  <CardContent className="p-0">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Name</TableHead>
+                          <TableHead>Email</TableHead>
+                          <TableHead>Phone</TableHead>
+                          <TableHead>Company</TableHead>
+                          <TableHead>Created</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredContacts.map((contact) => (
+                          <TableRow key={contact.id}>
+                            <TableCell className="font-medium">
+                              {fullName(contact.first_name, contact.last_name, "Unknown")}
+                            </TableCell>
+                            <TableCell>{contact.email || "—"}</TableCell>
+                            <TableCell>{contact.phone || "—"}</TableCell>
+                            <TableCell>{contact.company || "—"}</TableCell>
+                            <TableCell>{formatDateTime(contact.created_at)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
+
+            {!loading && selectedTenantId && page === "settings" && (
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                 <SectionTitle
                   title="Settings"
-                  description="Workspace settings, diagnostics, and admin access."
+                  description="Workspace and access context for the current tenant."
                 />
                 <div className="grid gap-6 xl:grid-cols-[1.1fr_1fr]">
                   <Card className="rounded-3xl border-slate-200/80 shadow-sm">
                     <CardHeader>
-                      <CardTitle>Workspace access</CardTitle>
-                      <CardDescription>
-                        This dashboard is for monitoring performance. Client onboarding lives in Admin.
-                      </CardDescription>
+                      <CardTitle>Workspace context</CardTitle>
+                      <CardDescription>What this dashboard is currently connected to.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="rounded-2xl bg-slate-100 p-4 text-sm text-slate-600">
-                        {tenantKeyFromUrl ? (
-                          <div className="space-y-2">
-                            <div className="font-medium text-slate-900">
-                              Tenant-scoped dashboard
-                            </div>
-                            <div>
-                              Current tenant key:{" "}
-                              <span className="font-medium">{tenantKeyFromUrl}</span>
-                            </div>
+                        <div className="space-y-2">
+                          <div>
+                            <span className="font-medium text-slate-900">Tenant:</span>{" "}
+                            {selectedTenant?.display_name || selectedTenant?.name || "—"}
                           </div>
-                        ) : (
-                          <div className="space-y-2">
-                            <div className="font-medium text-slate-900">
-                              Agency-wide demo view
-                            </div>
-                            <div>
-                              Add <span className="font-medium">?tenant_key=your-tenant-key</span>{" "}
-                              to the URL to scope this dashboard to one client.
-                            </div>
+                          <div>
+                            <span className="font-medium text-slate-900">Tenant key:</span>{" "}
+                            {selectedTenant?.tenant_key || "—"}
                           </div>
-                        )}
+                          <div>
+                            <span className="font-medium text-slate-900">Industry:</span>{" "}
+                            {selectedTenant?.industry || "General"}
+                          </div>
+                          <div>
+                            <span className="font-medium text-slate-900">Role:</span>{" "}
+                            {profile?.global_role || "member"}
+                          </div>
+                        </div>
                       </div>
 
                       <div className="rounded-2xl border border-slate-200 p-4">
-                        <div className="text-sm font-medium text-slate-900">
-                          Backend API
+                        <div className="text-sm font-medium text-slate-900">Profile</div>
+                        <div className="mt-2 text-sm text-slate-500">
+                          {profile?.full_name || "No full name set"}
                         </div>
-                        <div className="mt-1 break-all text-sm text-slate-500">
-                          {API_BASE_URL}
-                        </div>
-                      </div>
-
-                      <div className="flex gap-3">
-                        <Button
-                          className="rounded-2xl bg-slate-900 hover:bg-slate-800"
-                          onClick={() => window.open(ADMIN_BASE_URL, "_blank")}
-                        >
-                          <ExternalLink className="mr-2 h-4 w-4" />
-                          Open Admin
-                        </Button>
-                        <Button
-                          variant="outline"
-                          className="rounded-2xl border-slate-200"
-                          onClick={loadDashboard}
-                        >
-                          <CheckCircle2 className="mr-2 h-4 w-4" />
-                          Run diagnostics
-                        </Button>
+                        <div className="text-sm text-slate-500">{profile?.email || "—"}</div>
                       </div>
                     </CardContent>
                   </Card>
 
                   <Card className="rounded-3xl border-slate-200/80 shadow-sm">
                     <CardHeader>
-                      <CardTitle>Admin shortcuts</CardTitle>
-                      <CardDescription>
-                        Fast actions for you and your team.
-                      </CardDescription>
+                      <CardTitle>Workspace checks</CardTitle>
+                      <CardDescription>Simple operational confidence signals.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3">
                       {[
-                        { label: "View webhook logs", icon: Activity },
-                        { label: "Map Twilio numbers", icon: Phone },
-                        { label: "Review failed deliveries", icon: AlertTriangle },
-                        { label: "Open call events", icon: ClipboardList },
-                        { label: "Check API health", icon: CheckCircle2 },
-                      ].map(({ label, icon: Icon }) => (
-                        <button
-                          key={label}
-                          className="flex w-full items-center justify-between rounded-2xl border border-slate-200 p-4 text-left hover:bg-slate-50"
+                        {
+                          label: "Tenant selected",
+                          done: !!selectedTenantId,
+                        },
+                        {
+                          label: "Contacts loaded",
+                          done: contacts.length > 0,
+                        },
+                        {
+                          label: "Calls loaded",
+                          done: calls.length > 0,
+                        },
+                        {
+                          label: "Deals loaded",
+                          done: deals.length > 0,
+                        },
+                      ].map((item) => (
+                        <div
+                          key={item.label}
+                          className="flex items-center justify-between rounded-2xl border border-slate-200 p-4"
                         >
-                          <div className="flex items-center gap-3">
-                            <div className="rounded-xl bg-slate-100 p-2">
-                              <Icon className="h-4 w-4" />
-                            </div>
-                            <span className="font-medium">{label}</span>
-                          </div>
-                          <ChevronRight className="h-4 w-4 text-slate-400" />
-                        </button>
+                          <div className="font-medium">{item.label}</div>
+                          {item.done ? (
+                            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                          ) : (
+                            <AlertTriangle className="h-4 w-4 text-amber-600" />
+                          )}
+                        </div>
                       ))}
                     </CardContent>
                   </Card>
@@ -2009,16 +1253,6 @@ export default function ConfluxaFrontendPrototype() {
             )}
           </div>
         </main>
-
-        <CallTranscriptModal
-          open={showTranscriptModal}
-          loading={loadingTranscript}
-          detail={selectedCallDetail}
-          onClose={() => {
-            setShowTranscriptModal(false);
-            setSelectedCallDetail(null);
-          }}
-        />
       </div>
     </div>
   );
