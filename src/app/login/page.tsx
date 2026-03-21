@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { getSupabaseClient } from "@/lib/supabase";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -13,6 +13,8 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
+      const supabase = getSupabaseClient();
+
       const { error } = await supabase.auth.signInWithPassword({
         email: email.trim().toLowerCase(),
         password,
@@ -32,18 +34,23 @@ export default function LoginPage() {
       setLoading(false);
 
       if (userError || !user) {
-        alert("Unable to load user session");
+        alert("Unable to load user after sign-in.");
         return;
       }
 
-      const role =
-        String(
-          user.app_metadata?.role ||
-            user.user_metadata?.role ||
-            ""
-        ).toLowerCase();
+      const role = String(
+        user.app_metadata?.role ||
+          user.user_metadata?.role ||
+          user.app_metadata?.global_role ||
+          user.user_metadata?.global_role ||
+          ""
+      ).toLowerCase();
 
-      if (role === "platform_admin" || role === "admin") {
+      if (
+        role === "platform_admin" ||
+        role === "admin" ||
+        role === "owner"
+      ) {
         window.location.href = "/admin";
       } else {
         window.location.href = "/dashboard";

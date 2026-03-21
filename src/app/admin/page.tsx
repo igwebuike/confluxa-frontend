@@ -33,8 +33,8 @@ import {
   Eye,
   BarChart3,
   TrendingUp,
-  LogOut,
 } from "lucide-react";
+import { getSupabaseClient } from "@/lib/supabase";
 
 import {
   Card,
@@ -189,29 +189,6 @@ type TenantDetail = {
   error?: string;
 };
 
-type AuthTenant = {
-  id: string;
-  tenant_key: string;
-  tenant_name: string;
-  role?: string;
-};
-
-type AuthUser = {
-  id: string;
-  email: string;
-  full_name?: string;
-  global_role?: string;
-  is_active?: boolean;
-};
-
-type AuthMeResponse = {
-  ok: boolean;
-  user?: AuthUser;
-  tenants?: AuthTenant[];
-  error?: string;
-  detail?: string;
-};
-
 type AdminSection =
   | "overview"
   | "tenants"
@@ -277,9 +254,7 @@ function statusTone(status?: string) {
     s.includes("active") ||
     s.includes("healthy") ||
     s.includes("booked") ||
-    s.includes("qualified") ||
-    s.includes("owner") ||
-    s.includes("admin")
+    s.includes("qualified")
   ) {
     return "bg-emerald-100 text-emerald-800 border-emerald-200";
   }
@@ -413,19 +388,6 @@ function ModalShell({
   );
 }
 
-async function apiFetch(path: string, init: RequestInit = {}) {
-  const headers = new Headers(init.headers || {});
-  if (!headers.has("Content-Type") && !(init.body instanceof FormData)) {
-    headers.set("Content-Type", "application/json");
-  }
-
-  return fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers,
-    credentials: "include",
-  });
-}
-
 export default function ConfluxaAdminPage() {
   const [summary, setSummary] = useState<Summary>(emptySummary);
   const [calls, setCalls] = useState<CallRow[]>([]);
@@ -439,15 +401,15 @@ export default function ConfluxaAdminPage() {
   const [analyticsWindow, setAnalyticsWindow] = useState<AnalyticsWindow>("30");
 
   const [loading, setLoading] = useState(true);
+  const [authChecking, setAuthChecking] = useState(true);
   const [savingTenant, setSavingTenant] = useState(false);
   const [loadingTenantDetail, setLoadingTenantDetail] = useState(false);
-  const [authLoading, setAuthLoading] = useState(true);
   const [error, setError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
 
-  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [authTenants, setAuthTenants] = useState<AuthTenant[]>([]);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [userEmail, setUserEmail] = useState("");
+  const [userRole, setUserRole] = useState("");
+  const [isAllowedAdmin, setIsAllowedAdmin] = useState(false);
 
   const [showNewTenantModal, setShowNewTenantModal] = useState(false);
   const [showTenantDetailModal, setShowTenantDetailModal] = useState(false);
@@ -469,17 +431,17 @@ export default function ConfluxaAdminPage() {
   });
 
   function getAdminHeaders() {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
     if (ADMIN_SECRET) headers["X-Admin-Secret"] = ADMIN_SECRET;
     return headers;
   }
 
   async function handleLogout() {
     try {
-      await apiFetch("/auth/logout", {
-        method: "POST",
-        headers: getAdminHeaders(),
-      });
+      const supabase = getSupabaseClient();
+      await supabase.auth.signOut();
     } catch (e) {
       console.error(e);
     } finally {
@@ -487,42 +449,53 @@ export default function ConfluxaAdminPage() {
     }
   }
 
-  async function loadAuth() {
-    setAuthLoading(true);
+  async function checkAuthAndRole() {
+    setAuthChecking(true);
     setError("");
 
     try {
-      const res = await apiFetch("/auth/me", {
-        method: "GET",
-        headers: getAdminHeaders(),
-      });
+      const supabase = getSupabaseClient();
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
 
-      const data: AuthMeResponse = await res.json();
-
-      if (!res.ok || !data.ok || !data.user) {
+      if (userError || !user) {
         window.location.replace("/login");
         return false;
       }
 
-      const role = (data.user.global_role || "").toLowerCase();
-      const allowed = role === "platform_admin" || role === "admin";
+      const email = user.email || "";
+      const role =
+        String(
+          user.app_metadata?.role ||
+            user.user_metadata?.role ||
+            user.app_metadata?.global_role ||
+            user.user_metadata?.global_role ||
+            ""
+        ).toLowerCase();
+
+      setUserEmail(email);
+      setUserRole(role);
+
+      const allowed =
+        role === "platform_admin" ||
+        role === "admin" ||
+        role === "owner";
 
       if (!allowed) {
         window.location.replace("/dashboard");
         return false;
       }
 
-      setAuthUser(data.user);
-      setAuthTenants(Array.isArray(data.tenants) ? data.tenants : []);
-      setIsAdmin(true);
+      setIsAllowedAdmin(true);
       return true;
     } catch (e) {
       console.error(e);
-      setError("Could not verify session.");
       window.location.replace("/login");
       return false;
     } finally {
-      setAuthLoading(false);
+      setAuthChecking(false);
     }
   }
 
@@ -535,22 +508,58 @@ export default function ConfluxaAdminPage() {
 
       const [summaryRes, callsRes, leadsRes, tenantsRes, healthRes] =
         await Promise.all([
-          apiFetch("/api/dashboard/summary", { headers }).then((r) => r.json()),
-          apiFetch("/api/calls?limit=200", { headers }).then((r) => r.json()),
-          apiFetch("/api/leads?limit=200", { headers }).then((r) => r.json()),
-          apiFetch("/api/tenants", { headers }).then((r) => r.json()),
-          apiFetch("/api/system/health", { headers }).then((r) => r.json()),
+          fetch(`${API_BASE}/api/dashboard/summary`, { headers }),
+          fetch(`${API_BASE}/api/calls?limit=200`, { headers }),
+          fetch(`${API_BASE}/api/leads?limit=200`, { headers }),
+          fetch(`${API_BASE}/api/tenants`, { headers }),
+          fetch(`${API_BASE}/api/system/health`, { headers }),
         ]);
 
-      setSummary(summaryRes || emptySummary);
-      setCalls(Array.isArray(callsRes) ? callsRes : []);
-      setLeads(Array.isArray(leadsRes) ? leadsRes : []);
-      setTenants(Array.isArray(tenantsRes) ? tenantsRes : []);
-      setHealth(healthRes || null);
-    } catch (e) {
+      const [summaryJson, callsJson, leadsJson, tenantsJson, healthJson] =
+        await Promise.all([
+          summaryRes.json().catch(() => ({})),
+          callsRes.json().catch(() => []),
+          leadsRes.json().catch(() => []),
+          tenantsRes.json().catch(() => []),
+          healthRes.json().catch(() => ({})),
+        ]);
+
+      if (!summaryRes.ok) {
+        throw new Error(
+          summaryJson?.detail || summaryJson?.error || "Failed to load summary"
+        );
+      }
+      if (!callsRes.ok) {
+        throw new Error(
+          callsJson?.detail || callsJson?.error || "Failed to load calls"
+        );
+      }
+      if (!leadsRes.ok) {
+        throw new Error(
+          leadsJson?.detail || leadsJson?.error || "Failed to load leads"
+        );
+      }
+      if (!tenantsRes.ok) {
+        throw new Error(
+          tenantsJson?.detail || tenantsJson?.error || "Failed to load tenants"
+        );
+      }
+      if (!healthRes.ok) {
+        throw new Error(
+          healthJson?.detail || healthJson?.error || "Failed to load system health"
+        );
+      }
+
+      setSummary(summaryJson || emptySummary);
+      setCalls(Array.isArray(callsJson) ? callsJson : []);
+      setLeads(Array.isArray(leadsJson) ? leadsJson : []);
+      setTenants(Array.isArray(tenantsJson) ? tenantsJson : []);
+      setHealth(healthJson || null);
+    } catch (e: any) {
       console.error(e);
       setError(
-        "Could not load admin data. Check backend auth, admin secret, and API health."
+        e?.message ||
+          "Could not load admin data. Check API base URL, admin secret, and backend health."
       );
     } finally {
       setLoading(false);
@@ -558,12 +567,18 @@ export default function ConfluxaAdminPage() {
   }
 
   useEffect(() => {
+    let mounted = true;
+
     (async () => {
-      const ok = await loadAuth();
-      if (ok) {
+      const ok = await checkAuthAndRole();
+      if (mounted && ok) {
         await loadData();
       }
     })();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const filteredCalls = useMemo(() => {
@@ -759,7 +774,7 @@ export default function ConfluxaAdminPage() {
     setActionMessage("");
 
     try {
-      const res = await apiFetch(`/api/admin/tenants/${tenantId}`, {
+      const res = await fetch(`${API_BASE}/api/admin/tenants/${tenantId}`, {
         headers: getAdminHeaders(),
       });
       const data = await res.json();
@@ -797,10 +812,12 @@ export default function ConfluxaAdminPage() {
       }
 
       const url = tenantKey
-        ? `/api/calls/${callId}?tenant_key=${encodeURIComponent(tenantKey)}`
-        : `/api/calls/${callId}`;
+        ? `${API_BASE}/api/calls/${callId}?tenant_key=${encodeURIComponent(
+            tenantKey
+          )}`
+        : `${API_BASE}/api/calls/${callId}`;
 
-      const res = await apiFetch(url, {
+      const res = await fetch(url, {
         headers: getAdminHeaders(),
       });
 
@@ -842,11 +859,9 @@ export default function ConfluxaAdminPage() {
         is_active: true,
       };
 
-      const res = await apiFetch("/api/admin/tenants", {
+      const res = await fetch(`${API_BASE}/api/admin/tenants`, {
         method: "POST",
-        headers: {
-          ...getAdminHeaders(),
-        },
+        headers: getAdminHeaders(),
         body: JSON.stringify(payload),
       });
 
@@ -902,22 +917,16 @@ export default function ConfluxaAdminPage() {
     { key: "settings", label: "Settings", icon: Settings },
   ];
 
-  const initials = useMemo(() => {
-    const name = authUser?.full_name || authUser?.email || "EE";
-    return name
-      .split(" ")
-      .map((s) => s[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase();
-  }, [authUser]);
-
-  if (authLoading) {
+  if (authChecking) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-600">
-        Checking session...
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-600">
+        Checking admin access...
       </div>
     );
+  }
+
+  if (!isAllowedAdmin) {
+    return null;
   }
 
   return (
@@ -1429,13 +1438,12 @@ export default function ConfluxaAdminPage() {
                     className="rounded-2xl border-slate-200"
                     onClick={handleLogout}
                   >
-                    <LogOut className="mr-2 h-4 w-4" />
                     Logout
                   </Button>
 
                   <Avatar className="h-10 w-10 rounded-2xl">
                     <AvatarFallback className="rounded-2xl bg-orange-100 text-orange-900">
-                      {initials}
+                      {userEmail?.slice(0, 1).toUpperCase() || "A"}
                     </AvatarFallback>
                   </Avatar>
                 </div>
@@ -1444,12 +1452,11 @@ export default function ConfluxaAdminPage() {
           </header>
 
           <div className="space-y-8 px-6 py-6">
-            {authUser ? (
+            {userEmail ? (
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-                <div>Email: {authUser.email || "—"}</div>
-                <div>Role: {authUser.global_role || "member"}</div>
+                <div>Email: {userEmail || "—"}</div>
+                <div>Role: {userRole || "—"}</div>
                 <div>Admin secret present: {ADMIN_SECRET ? "Yes" : "No"}</div>
-                <div>Accessible tenant memberships: {authTenants.length}</div>
               </div>
             ) : null}
 
@@ -2407,12 +2414,14 @@ export default function ConfluxaAdminPage() {
                       </div>
 
                       <div className="rounded-2xl border border-slate-200 p-4">
-                        <div className="text-sm font-medium">Current session</div>
-                        <div className="mt-2 space-y-1 text-sm text-slate-500">
-                          <div>User: {authUser?.email || "—"}</div>
-                          <div>Role: {authUser?.global_role || "member"}</div>
-                          <div>Tenant memberships: {authTenants.length}</div>
-                        </div>
+                        <div className="text-sm font-medium">Next steps</div>
+                        <ul className="mt-2 space-y-2 text-sm text-slate-500">
+                          <li>Supabase handles login/session only</li>
+                          <li>Render backend handles business data APIs</li>
+                          <li>Next: transcript viewer refinements</li>
+                          <li>Next: lead conversion tracking</li>
+                          <li>Later: CSV export and billing/MRR endpoint</li>
+                        </ul>
                       </div>
                     </CardContent>
                   </Card>
@@ -2433,8 +2442,8 @@ export default function ConfluxaAdminPage() {
                         revenue, delivery, and onboarding?”
                       </p>
                       <p>
-                        This page now checks auth from <span className="font-medium">/auth/me</span>,
-                        not Supabase client auth.
+                        That is why this page uses operator language, analytics,
+                        action buttons, and cross-tenant visibility.
                       </p>
                     </CardContent>
                   </Card>

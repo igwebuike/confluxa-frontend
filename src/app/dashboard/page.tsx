@@ -21,7 +21,15 @@ import {
   LogOut,
 } from "lucide-react";
 
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { getSupabaseClient } from "@/lib/supabase";
+
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -61,21 +69,6 @@ type AuthUser = {
   full_name?: string;
   global_role?: string;
   is_active?: boolean;
-};
-
-type AuthTenant = {
-  id: string;
-  tenant_key: string;
-  tenant_name: string;
-  role?: string;
-};
-
-type AuthMeResponse = {
-  ok: boolean;
-  user?: AuthUser;
-  tenants?: AuthTenant[];
-  error?: string;
-  detail?: string;
 };
 
 type DashboardSummary = {
@@ -152,6 +145,19 @@ type ContactRow = {
   created_at?: string | null;
 };
 
+type BackendTenantRow = {
+  id?: string;
+  tenant_key?: string;
+  name?: string;
+  display_name?: string;
+  role?: string;
+  phone_number?: string;
+  status?: string;
+  calls?: number;
+  booked?: number;
+  recovered?: number;
+};
+
 const NAV_ITEMS: Array<{
   key: NavKey;
   label: string;
@@ -169,10 +175,8 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
   "https://confluxa-core.onrender.com";
 
-function fullName(first?: string | null, last?: string | null, fallback = "Unknown") {
-  const name = [first || "", last || ""].join(" ").trim();
-  return name || fallback;
-}
+const ADMIN_SECRET =
+  process.env.NEXT_PUBLIC_ADMIN_SECRET?.trim() || "";
 
 function formatDateTime(input?: string | null) {
   if (!input) return "—";
@@ -255,7 +259,9 @@ function SectionTitle({
   return (
     <div className="flex items-center justify-between gap-4">
       <div>
-        <h2 className="text-xl font-semibold tracking-tight text-slate-900">{title}</h2>
+        <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+          {title}
+        </h2>
         <p className="text-sm text-slate-500">{description}</p>
       </div>
       {action}
@@ -267,6 +273,9 @@ async function apiFetch(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers || {});
   if (!headers.has("Content-Type") && !(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
+  }
+  if (ADMIN_SECRET) {
+    headers.set("X-Admin-Secret", ADMIN_SECRET);
   }
 
   return fetch(`${API_BASE}${path}`, {
@@ -293,6 +302,7 @@ export default function DashboardPage() {
     missed_calls_recovered: 0,
     active_clients: 0,
   });
+
   const [calls, setCalls] = useState<CallRow[]>([]);
   const [leads, setLeads] = useState<LeadRow[]>([]);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
@@ -306,7 +316,8 @@ export default function DashboardPage() {
 
   async function handleLogout() {
     try {
-      await apiFetch("/auth/logout", { method: "POST" });
+      const supabase = getSupabaseClient();
+      await supabase.auth.signOut();
     } catch (e) {
       console.error(e);
     } finally {
@@ -314,29 +325,49 @@ export default function DashboardPage() {
     }
   }
 
-  async function loadAuth() {
+  function syncTenantKeyToUrl(tenantKey: string) {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (tenantKey) {
+      url.searchParams.set("tenant_key", tenantKey);
+    } else {
+      url.searchParams.delete("tenant_key");
+    }
+    window.history.replaceState({}, "", url.toString());
+  }
+
+  async function loadSupabaseAuthAndTenants() {
     setAuthLoading(true);
     setError("");
 
     try {
-      const res = await apiFetch("/auth/me", { method: "GET" });
-      const data: AuthMeResponse = await res.json();
+      const supabase = getSupabaseClient();
 
-      if (!res.ok || !data.ok || !data.user) {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
         window.location.replace("/login");
         return;
       }
 
-      setProfile(data.user);
+      const globalRole = String(
+        user.app_metadata?.role ||
+          user.user_metadata?.role ||
+          user.app_metadata?.global_role ||
+          user.user_metadata?.global_role ||
+          "member"
+      ).toLowerCase();
 
-      const tenants: TenantOption[] = (data.tenants || []).map((t) => ({
-        id: t.id,
-        tenant_key: t.tenant_key,
-        name: t.tenant_name,
-        role: t.role,
-      }));
-
-      setTenantOptions(tenants);
+      setProfile({
+        id: user.id,
+        email: user.email || "",
+        full_name: user.user_metadata?.full_name || "",
+        global_role: globalRole,
+        is_active: true,
+      });
 
       const params =
         typeof window !== "undefined"
@@ -344,12 +375,49 @@ export default function DashboardPage() {
           : null;
 
       const tenantKeyFromUrl = params?.get("tenant_key") || "";
+
+      let options: TenantOption[] = [];
+
+      try {
+        const tenantRes = await apiFetch("/api/tenants", { method: "GET" });
+        const tenantData = await tenantRes.json();
+
+        if (Array.isArray(tenantData)) {
+          options = tenantData
+            .filter((row: BackendTenantRow) => row?.tenant_key && row?.name)
+            .map((row: BackendTenantRow) => ({
+              id: String(row.id || row.tenant_key || ""),
+              tenant_key: String(row.tenant_key || ""),
+              name: String(row.name || row.display_name || row.tenant_key || ""),
+              role: String(row.role || (globalRole === "admin" ? "admin" : "member")),
+            }));
+        }
+      } catch (tenantErr) {
+        console.error("Failed loading tenant options:", tenantErr);
+      }
+
+      if (!options.length && tenantKeyFromUrl) {
+        options = [
+          {
+            id: tenantKeyFromUrl,
+            tenant_key: tenantKeyFromUrl,
+            name: tenantKeyFromUrl,
+            role: globalRole,
+          },
+        ];
+      }
+
+      setTenantOptions(options);
+
       const resolvedTenantKey =
-        tenantKeyFromUrl && tenants.some((t) => t.tenant_key === tenantKeyFromUrl)
+        tenantKeyFromUrl && options.some((t) => t.tenant_key === tenantKeyFromUrl)
           ? tenantKeyFromUrl
-          : tenants[0]?.tenant_key || "";
+          : options[0]?.tenant_key || tenantKeyFromUrl || "";
 
       setSelectedTenantKey(resolvedTenantKey);
+      if (resolvedTenantKey) {
+        syncTenantKeyToUrl(resolvedTenantKey);
+      }
     } catch (err: any) {
       console.error(err);
       setError(err?.message || "Failed to verify session.");
@@ -367,24 +435,31 @@ export default function DashboardPage() {
     setError("");
 
     try {
-      const [
-        summaryRes,
-        callsRes,
-        leadsRes,
-        analyticsRes,
-      ] = await Promise.all([
-        apiFetch(`/api/dashboard/summary?tenant_key=${encodeURIComponent(tenantKey)}`).then((r) => r.json()),
-        apiFetch(`/api/calls?tenant_key=${encodeURIComponent(tenantKey)}&limit=200`).then((r) => r.json()),
-        apiFetch(`/api/leads?tenant_key=${encodeURIComponent(tenantKey)}&limit=200`).then((r) => r.json()),
-        apiFetch(`/api/dashboard/tenant-analytics?tenant_key=${encodeURIComponent(tenantKey)}&days=30`).then((r) => r.json()),
+      const [summaryRes, callsRes, leadsRes, analyticsRes] = await Promise.all([
+        apiFetch(
+          `/api/dashboard/summary?tenant_key=${encodeURIComponent(tenantKey)}`
+        ).then((r) => r.json()),
+        apiFetch(
+          `/api/calls?tenant_key=${encodeURIComponent(tenantKey)}&limit=200`
+        ).then((r) => r.json()),
+        apiFetch(
+          `/api/leads?tenant_key=${encodeURIComponent(tenantKey)}&limit=200`
+        ).then((r) => r.json()),
+        apiFetch(
+          `/api/dashboard/tenant-analytics?tenant_key=${encodeURIComponent(
+            tenantKey
+          )}&days=30`
+        ).then((r) => r.json()),
       ]);
 
-      setSummary(summaryRes || {
-        calls_today: 0,
-        booked_meetings: 0,
-        missed_calls_recovered: 0,
-        active_clients: 0,
-      });
+      setSummary(
+        summaryRes || {
+          calls_today: 0,
+          booked_meetings: 0,
+          missed_calls_recovered: 0,
+          active_clients: 0,
+        }
+      );
 
       const mappedCalls: CallRow[] = Array.isArray(callsRes)
         ? callsRes.map((row: any) => ({
@@ -485,11 +560,12 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
-    loadAuth();
+    loadSupabaseAuthAndTenants();
   }, []);
 
   useEffect(() => {
     if (selectedTenantKey) {
+      syncTenantKeyToUrl(selectedTenantKey);
       loadTenantData(selectedTenantKey);
     }
   }, [selectedTenantKey]);
@@ -499,12 +575,7 @@ export default function DashboardPage() {
     return calls.filter((call) =>
       !q
         ? true
-        : [
-            call.caller_name,
-            call.caller_phone,
-            call.summary,
-            call.outcome,
-          ]
+        : [call.caller_name, call.caller_phone, call.summary, call.outcome]
             .join(" ")
             .toLowerCase()
             .includes(q)
@@ -516,12 +587,7 @@ export default function DashboardPage() {
     return deals.filter((deal) =>
       !q
         ? true
-        : [
-            deal.title,
-            deal.status,
-            deal.stage,
-            deal.contact_name,
-          ]
+        : [deal.title, deal.status, deal.stage, deal.contact_name]
             .join(" ")
             .toLowerCase()
             .includes(q)
@@ -594,7 +660,9 @@ export default function DashboardPage() {
 
     for (const call of calls) {
       if (!call.time) continue;
-      const key = new Date(call.time).toISOString().slice(0, 10);
+      const parsed = new Date(call.time);
+      if (Number.isNaN(parsed.getTime())) continue;
+      const key = parsed.toISOString().slice(0, 10);
       if (map.has(key)) {
         const row = map.get(key)!;
         row.calls += 1;
@@ -715,7 +783,8 @@ export default function DashboardPage() {
                   </div>
                   <div>{selectedTenant?.role || "member"}</div>
                   <div className="text-slate-300">
-                    {(profile?.global_role || "").toLowerCase() === "platform_admin"
+                    {(profile?.global_role || "").toLowerCase() === "platform_admin" ||
+                    (profile?.global_role || "").toLowerCase() === "admin"
                       ? "Platform admin access"
                       : "Tenant-scoped access"}
                   </div>
@@ -742,7 +811,7 @@ export default function DashboardPage() {
                   {selectedTenant?.name || "Dashboard"}
                 </h1>
                 <p className="text-sm text-slate-500">
-                  Real calls, deals, tasks, and contacts from your own backend workspace.
+                  Real calls, deals, tasks, and contacts from your backend workspace.
                 </p>
               </div>
 
@@ -762,11 +831,17 @@ export default function DashboardPage() {
                     <SelectValue placeholder="Select tenant" />
                   </SelectTrigger>
                   <SelectContent>
-                    {tenantOptions.map((tenant) => (
-                      <SelectItem key={tenant.id} value={tenant.tenant_key}>
-                        {tenant.name}
+                    {tenantOptions.length ? (
+                      tenantOptions.map((tenant) => (
+                        <SelectItem key={tenant.id} value={tenant.tenant_key}>
+                          {tenant.name}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="__none" disabled>
+                        No tenant available
                       </SelectItem>
-                    ))}
+                    )}
                   </SelectContent>
                 </Select>
 
@@ -809,12 +884,17 @@ export default function DashboardPage() {
 
             {!loading && !selectedTenantKey ? (
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
-                No tenant is available for this user yet.
+                No tenant is available yet. Add `?tenant_key=your-tenant-key` to the URL,
+                or make sure `/api/tenants` returns tenant rows.
               </div>
             ) : null}
 
             {!loading && selectedTenantKey && page === "overview" && (
-              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-8"
+              >
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                   {summaryCards.map((card) => (
                     <StatCard key={card.title} {...card} />
@@ -825,7 +905,9 @@ export default function DashboardPage() {
                   <Card className="rounded-3xl border-slate-200/80 shadow-sm">
                     <CardHeader>
                       <CardTitle>Call trend</CardTitle>
-                      <CardDescription>Calls and booked outcomes over the last 7 days.</CardDescription>
+                      <CardDescription>
+                        Calls and booked outcomes over the last 7 days.
+                      </CardDescription>
                     </CardHeader>
                     <CardContent>
                       <div className="h-[300px]">
@@ -836,7 +918,12 @@ export default function DashboardPage() {
                             <YAxis />
                             <Tooltip />
                             <Line type="monotone" dataKey="calls" strokeWidth={4} dot={false} />
-                            <Line type="monotone" dataKey="booked" strokeWidth={4} dot={false} />
+                            <Line
+                              type="monotone"
+                              dataKey="booked"
+                              strokeWidth={4}
+                              dot={false}
+                            />
                           </LineChart>
                         </ResponsiveContainer>
                       </div>
@@ -846,7 +933,9 @@ export default function DashboardPage() {
                   <Card className="rounded-3xl border-slate-200/80 shadow-sm">
                     <CardHeader>
                       <CardTitle>Tasks due</CardTitle>
-                      <CardDescription>Follow-up items that need attention.</CardDescription>
+                      <CardDescription>
+                        Follow-up items that need attention.
+                      </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3">
                       {filteredTasks.slice(0, 5).length ? (
@@ -936,7 +1025,9 @@ export default function DashboardPage() {
                   <Card className="rounded-3xl border-slate-200/80 shadow-sm">
                     <CardHeader>
                       <CardTitle>Pipeline stages</CardTitle>
-                      <CardDescription>Open deal distribution by stage.</CardDescription>
+                      <CardDescription>
+                        Open deal distribution by stage.
+                      </CardDescription>
                     </CardHeader>
                     <CardContent>
                       <div className="h-[280px]">
@@ -957,7 +1048,11 @@ export default function DashboardPage() {
             )}
 
             {!loading && selectedTenantKey && page === "calls" && (
-              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-6"
+              >
                 <SectionTitle
                   title="Calls"
                   description="Every call record in this tenant workspace."
@@ -986,9 +1081,7 @@ export default function DashboardPage() {
                             <TableCell>{formatDateTime(call.time)}</TableCell>
                             <TableCell>{formatDuration(call.duration_seconds)}</TableCell>
                             <TableCell>
-                              <Badge variant="secondary">
-                                {call.outcome || "New"}
-                              </Badge>
+                              <Badge variant="secondary">{call.outcome || "New"}</Badge>
                             </TableCell>
                             <TableCell className="max-w-[360px] truncate">
                               {call.summary || "No summary"}
@@ -1003,7 +1096,11 @@ export default function DashboardPage() {
             )}
 
             {!loading && selectedTenantKey && page === "deals" && (
-              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-6"
+              >
                 <SectionTitle
                   title="Deals"
                   description="Live opportunity pipeline for this tenant."
@@ -1042,7 +1139,11 @@ export default function DashboardPage() {
             )}
 
             {!loading && selectedTenantKey && page === "tasks" && (
-              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-6"
+              >
                 <SectionTitle
                   title="Tasks"
                   description="Follow-up and operational tasks for this tenant."
@@ -1086,7 +1187,11 @@ export default function DashboardPage() {
             )}
 
             {!loading && selectedTenantKey && page === "contacts" && (
-              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-6"
+              >
                 <SectionTitle
                   title="Contacts"
                   description="People and businesses associated with this tenant."
@@ -1121,7 +1226,11 @@ export default function DashboardPage() {
             )}
 
             {!loading && selectedTenantKey && page === "settings" && (
-              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-6"
+              >
                 <SectionTitle
                   title="Settings"
                   description="Workspace and access context for the current tenant."
@@ -1130,7 +1239,9 @@ export default function DashboardPage() {
                   <Card className="rounded-3xl border-slate-200/80 shadow-sm">
                     <CardHeader>
                       <CardTitle>Workspace context</CardTitle>
-                      <CardDescription>What this dashboard is currently connected to.</CardDescription>
+                      <CardDescription>
+                        What this dashboard is currently connected to.
+                      </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="rounded-2xl bg-slate-100 p-4 text-sm text-slate-600">
@@ -1167,26 +1278,16 @@ export default function DashboardPage() {
                   <Card className="rounded-3xl border-slate-200/80 shadow-sm">
                     <CardHeader>
                       <CardTitle>Workspace checks</CardTitle>
-                      <CardDescription>Simple operational confidence signals.</CardDescription>
+                      <CardDescription>
+                        Simple operational confidence signals.
+                      </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3">
                       {[
-                        {
-                          label: "Tenant selected",
-                          done: !!selectedTenantKey,
-                        },
-                        {
-                          label: "Contacts loaded",
-                          done: contacts.length > 0,
-                        },
-                        {
-                          label: "Calls loaded",
-                          done: calls.length > 0,
-                        },
-                        {
-                          label: "Leads loaded",
-                          done: leads.length > 0,
-                        },
+                        { label: "Tenant selected", done: !!selectedTenantKey },
+                        { label: "Contacts loaded", done: contacts.length > 0 },
+                        { label: "Calls loaded", done: calls.length > 0 },
+                        { label: "Leads loaded", done: leads.length > 0 },
                       ].map((item) => (
                         <div
                           key={item.label}
