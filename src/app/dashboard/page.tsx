@@ -4,7 +4,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Phone,
-  CalendarDays,
   Building2,
   Settings,
   Bell,
@@ -18,11 +17,10 @@ import {
   RefreshCcw,
   TrendingUp,
   Users,
-  FileText,
   Briefcase,
   LogOut,
 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,102 +53,104 @@ import {
   Bar,
 } from "recharts";
 
-type Profile = {
+type NavKey = "overview" | "calls" | "deals" | "tasks" | "contacts" | "settings";
+
+type AuthUser = {
   id: string;
-  email: string | null;
-  full_name: string | null;
-  global_role: string;
+  email: string;
+  full_name?: string;
+  global_role?: string;
+  is_active?: boolean;
 };
 
-type Tenant = {
+type AuthTenant = {
+  id: string;
+  tenant_key: string;
+  tenant_name: string;
+  role?: string;
+};
+
+type AuthMeResponse = {
+  ok: boolean;
+  user?: AuthUser;
+  tenants?: AuthTenant[];
+  error?: string;
+  detail?: string;
+};
+
+type DashboardSummary = {
+  calls_today: number;
+  booked_meetings: number;
+  missed_calls_recovered: number;
+  active_clients: number;
+  calls_today_note?: string;
+  booked_meetings_note?: string;
+  missed_calls_recovered_note?: string;
+  active_clients_note?: string;
+  tenant_key?: string;
+  tenant_name?: string;
+};
+
+type CallRow = {
+  id: string;
+  vapi_call_id?: string;
+  tenant_id?: string;
+  tenant_name?: string;
+  caller_name: string;
+  caller_phone: string;
+  time: string;
+  duration_seconds?: number | null;
+  outcome: string;
+  summary: string;
+};
+
+type LeadRow = {
+  id: string;
+  tenant_id?: string;
+  tenant_name?: string;
+  name: string;
+  niche: string;
+  status: string;
+  business: string;
+  issue: string;
+  next_action: string;
+};
+
+type TenantOption = {
   id: string;
   tenant_key: string;
   name: string;
-  display_name: string | null;
-  industry: string | null;
+  role?: string;
 };
 
-type Membership = {
+type TaskRow = {
   id: string;
-  role: string;
-  tenant: Tenant | null;
+  title: string;
+  status: string;
+  priority?: string;
+  due_at?: string | null;
+  description?: string | null;
+  contact_name?: string;
 };
 
-type Contact = {
+type DealRow = {
   id: string;
-  first_name: string | null;
-  last_name: string | null;
-  email: string | null;
-  phone: string | null;
-  company: string | null;
-  created_at: string;
+  title: string;
+  stage?: string;
+  status?: string;
+  estimated_value?: number | null;
+  probability?: number | null;
+  contact_name?: string;
 };
 
-type PipelineStage = {
+type ContactRow = {
   id: string;
   name: string;
-  stage_key: string;
-  position: number;
+  email?: string | null;
+  phone?: string | null;
+  company?: string | null;
+  created_at?: string | null;
 };
-
-type Deal = {
-  id: string;
-  title: string;
-  status: string;
-  source: string | null;
-  estimated_value: number | null;
-  probability: number | null;
-  created_at: string;
-  last_activity_at: string | null;
-  stage: PipelineStage | null;
-  contact: {
-    id: string;
-    first_name: string | null;
-    last_name: string | null;
-    email: string | null;
-    phone: string | null;
-  } | null;
-};
-
-type Task = {
-  id: string;
-  title: string;
-  description: string | null;
-  status: string;
-  priority: string;
-  due_at: string | null;
-  created_at: string;
-  contact: {
-    id: string;
-    first_name: string | null;
-    last_name: string | null;
-    email: string | null;
-  } | null;
-};
-
-type Call = {
-  id: string;
-  external_call_id: string | null;
-  direction: string | null;
-  caller_phone: string | null;
-  caller_email: string | null;
-  called_number: string | null;
-  duration_seconds: number | null;
-  summary: string | null;
-  transcript: string | null;
-  outcome: string | null;
-  qualification_status: string | null;
-  created_at: string;
-  contact: {
-    id: string;
-    first_name: string | null;
-    last_name: string | null;
-    email: string | null;
-    phone: string | null;
-  } | null;
-};
-
-type NavKey = "overview" | "calls" | "deals" | "tasks" | "contacts" | "settings";
 
 const NAV_ITEMS: Array<{
   key: NavKey;
@@ -164,6 +164,10 @@ const NAV_ITEMS: Array<{
   { key: "contacts", label: "Contacts", icon: Users },
   { key: "settings", label: "Settings", icon: Settings },
 ];
+
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
+  "https://confluxa-core.onrender.com";
 
 function fullName(first?: string | null, last?: string | null, fallback = "Unknown") {
   const name = [first || "", last || ""].join(" ").trim();
@@ -206,12 +210,6 @@ function formatDuration(seconds?: number | null) {
   const secs = Math.floor(seconds % 60);
   if (mins <= 0) return `${secs}s`;
   return `${mins}m ${secs}s`;
-}
-
-function startOfToday() {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
 }
 
 function StatCard({
@@ -265,264 +263,236 @@ function SectionTitle({
   );
 }
 
+async function apiFetch(path: string, init: RequestInit = {}) {
+  const headers = new Headers(init.headers || {});
+  if (!headers.has("Content-Type") && !(init.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  return fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers,
+    credentials: "include",
+  });
+}
+
 export default function DashboardPage() {
   const [page, setPage] = useState<NavKey>("overview");
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [memberships, setMemberships] = useState<Membership[]>([]);
-  const [adminTenants, setAdminTenants] = useState<Tenant[]>([]);
-  const [selectedTenantId, setSelectedTenantId] = useState<string>("");
+  const [profile, setProfile] = useState<AuthUser | null>(null);
+  const [tenantOptions, setTenantOptions] = useState<TenantOption[]>([]);
+  const [selectedTenantKey, setSelectedTenantKey] = useState("");
   const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [deals, setDeals] = useState<Deal[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [calls, setCalls] = useState<Call[]>([]);
+  const [summary, setSummary] = useState<DashboardSummary>({
+    calls_today: 0,
+    booked_meetings: 0,
+    missed_calls_recovered: 0,
+    active_clients: 0,
+  });
+  const [calls, setCalls] = useState<CallRow[]>([]);
+  const [leads, setLeads] = useState<LeadRow[]>([]);
+  const [tasks, setTasks] = useState<TaskRow[]>([]);
+  const [deals, setDeals] = useState<DealRow[]>([]);
+  const [contacts, setContacts] = useState<ContactRow[]>([]);
 
-  const selectedTenant = useMemo(() => {
-    const fromMembership = memberships.find((m) => m.tenant?.id === selectedTenantId)?.tenant;
-    const fromAdmin = adminTenants.find((t) => t.id === selectedTenantId);
-    return fromMembership || fromAdmin || null;
-  }, [memberships, adminTenants, selectedTenantId]);
-
-  const tenantOptions = useMemo(() => {
-    const membershipTenants = memberships
-      .map((m) => m.tenant)
-      .filter(Boolean) as Tenant[];
-
-    const all = [...membershipTenants];
-    for (const tenant of adminTenants) {
-      if (!all.some((t) => t.id === tenant.id)) {
-        all.push(tenant);
-      }
-    }
-    return all;
-  }, [memberships, adminTenants]);
+  const selectedTenant = useMemo(
+    () => tenantOptions.find((t) => t.tenant_key === selectedTenantKey) || null,
+    [tenantOptions, selectedTenantKey]
+  );
 
   async function handleLogout() {
-    await supabase.auth.signOut();
-    window.location.replace("/login");
+    try {
+      await apiFetch("/auth/logout", { method: "POST" });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      window.location.replace("/login");
+    }
   }
 
-  async function loadBase() {
-    setLoading(true);
+  async function loadAuth() {
+    setAuthLoading(true);
     setError("");
 
     try {
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
+      const res = await apiFetch("/auth/me", { method: "GET" });
+      const data: AuthMeResponse = await res.json();
 
-      if (authError || !user) {
+      if (!res.ok || !data.ok || !data.user) {
         window.location.replace("/login");
         return;
       }
 
-      const { data: profileData, error: profileError } = await supabase
-        .from("profiles")
-        .select("id, email, full_name, global_role")
-        .eq("id", user.id)
-        .single();
+      setProfile(data.user);
 
-      if (profileError) {
-        throw profileError;
-      }
+      const tenants: TenantOption[] = (data.tenants || []).map((t) => ({
+        id: t.id,
+        tenant_key: t.tenant_key,
+        name: t.tenant_name,
+        role: t.role,
+      }));
 
-      setProfile(profileData);
-
-      const { data: membershipData, error: membershipError } = await supabase
-        .from("tenant_memberships")
-        .select(`
-          id,
-          role,
-          tenant:tenants (
-            id,
-            tenant_key,
-            name,
-            display_name,
-            industry
-          )
-        `)
-        .order("created_at", { ascending: true });
-
-      if (membershipError) {
-        throw membershipError;
-      }
-
-      const normalizedMemberships = (membershipData || []) as unknown as Membership[];
-      setMemberships(normalizedMemberships);
-
-      let tenantChoices: Tenant[] = normalizedMemberships
-        .map((m) => m.tenant)
-        .filter(Boolean) as Tenant[];
-
-      if (profileData.global_role === "platform_admin") {
-        const { data: tenantData, error: tenantError } = await supabase
-          .from("tenants")
-          .select("id, tenant_key, name, display_name, industry")
-          .eq("is_active", true)
-          .order("created_at", { ascending: true });
-
-        if (tenantError) {
-          throw tenantError;
-        }
-
-        const adminTenantRows = (tenantData || []) as Tenant[];
-        setAdminTenants(adminTenantRows);
-        tenantChoices = adminTenantRows;
-      }
+      setTenantOptions(tenants);
 
       const params =
         typeof window !== "undefined"
           ? new URLSearchParams(window.location.search)
           : null;
-      const tenantIdFromUrl = params?.get("tenant_id") || "";
+
       const tenantKeyFromUrl = params?.get("tenant_key") || "";
+      const resolvedTenantKey =
+        tenantKeyFromUrl && tenants.some((t) => t.tenant_key === tenantKeyFromUrl)
+          ? tenantKeyFromUrl
+          : tenants[0]?.tenant_key || "";
 
-      let resolvedTenantId = "";
-
-      if (tenantIdFromUrl && tenantChoices.some((t) => t.id === tenantIdFromUrl)) {
-        resolvedTenantId = tenantIdFromUrl;
-      } else if (tenantKeyFromUrl) {
-        const match = tenantChoices.find((t) => t.tenant_key === tenantKeyFromUrl);
-        if (match) resolvedTenantId = match.id;
-      }
-
-      if (!resolvedTenantId && tenantChoices.length > 0) {
-        resolvedTenantId = tenantChoices[0].id;
-      }
-
-      setSelectedTenantId(resolvedTenantId);
+      setSelectedTenantKey(resolvedTenantKey);
     } catch (err: any) {
       console.error(err);
-      setError(err?.message || "Failed to load workspace.");
+      setError(err?.message || "Failed to verify session.");
+      window.location.replace("/login");
     } finally {
-      setLoading(false);
+      setAuthLoading(false);
     }
   }
 
-  async function loadTenantData(tenantId: string) {
-    if (!tenantId) return;
+  async function loadTenantData(tenantKey: string) {
+    if (!tenantKey) return;
 
+    setLoading(true);
     setRefreshing(true);
     setError("");
 
     try {
-      const [contactsRes, dealsRes, tasksRes, callsRes] = await Promise.all([
-        supabase
-          .from("contacts")
-          .select("id, first_name, last_name, email, phone, company, created_at")
-          .eq("tenant_id", tenantId)
-          .order("created_at", { ascending: false })
-          .limit(200),
-
-        supabase
-          .from("deals")
-          .select(`
-            id,
-            title,
-            status,
-            source,
-            estimated_value,
-            probability,
-            created_at,
-            last_activity_at,
-            stage:pipeline_stages (
-              id,
-              name,
-              stage_key,
-              position
-            ),
-            contact:contacts (
-              id,
-              first_name,
-              last_name,
-              email,
-              phone
-            )
-          `)
-          .eq("tenant_id", tenantId)
-          .order("created_at", { ascending: false })
-          .limit(200),
-
-        supabase
-          .from("tasks")
-          .select(`
-            id,
-            title,
-            description,
-            status,
-            priority,
-            due_at,
-            created_at,
-            contact:contacts (
-              id,
-              first_name,
-              last_name,
-              email
-            )
-          `)
-          .eq("tenant_id", tenantId)
-          .order("due_at", { ascending: true })
-          .limit(200),
-
-        supabase
-          .from("calls")
-          .select(`
-            id,
-            external_call_id,
-            direction,
-            caller_phone,
-            caller_email,
-            called_number,
-            duration_seconds,
-            summary,
-            transcript,
-            outcome,
-            qualification_status,
-            created_at,
-            contact:contacts (
-              id,
-              first_name,
-              last_name,
-              email,
-              phone
-            )
-          `)
-          .eq("tenant_id", tenantId)
-          .order("created_at", { ascending: false })
-          .limit(300),
+      const [
+        summaryRes,
+        callsRes,
+        leadsRes,
+        analyticsRes,
+      ] = await Promise.all([
+        apiFetch(`/api/dashboard/summary?tenant_key=${encodeURIComponent(tenantKey)}`).then((r) => r.json()),
+        apiFetch(`/api/calls?tenant_key=${encodeURIComponent(tenantKey)}&limit=200`).then((r) => r.json()),
+        apiFetch(`/api/leads?tenant_key=${encodeURIComponent(tenantKey)}&limit=200`).then((r) => r.json()),
+        apiFetch(`/api/dashboard/tenant-analytics?tenant_key=${encodeURIComponent(tenantKey)}&days=30`).then((r) => r.json()),
       ]);
 
-      if (contactsRes.error) throw contactsRes.error;
-      if (dealsRes.error) throw dealsRes.error;
-      if (tasksRes.error) throw tasksRes.error;
-      if (callsRes.error) throw callsRes.error;
+      setSummary(summaryRes || {
+        calls_today: 0,
+        booked_meetings: 0,
+        missed_calls_recovered: 0,
+        active_clients: 0,
+      });
 
-      setContacts((contactsRes.data || []) as Contact[]);
-      setDeals((dealsRes.data || []) as unknown as Deal[]);
-      setTasks((tasksRes.data || []) as unknown as Task[]);
-      setCalls((callsRes.data || []) as unknown as Call[]);
+      const mappedCalls: CallRow[] = Array.isArray(callsRes)
+        ? callsRes.map((row: any) => ({
+            id: String(row.id ?? ""),
+            vapi_call_id: row.vapi_call_id ? String(row.vapi_call_id) : undefined,
+            tenant_id: row.tenant_id ? String(row.tenant_id) : undefined,
+            tenant_name: row.tenant_name ? String(row.tenant_name) : undefined,
+            caller_name: String(row.caller_name ?? "Unknown Caller"),
+            caller_phone: String(row.caller_phone ?? ""),
+            time: String(row.time ?? ""),
+            duration_seconds:
+              typeof row.duration_seconds === "number" ? row.duration_seconds : null,
+            outcome: String(row.outcome ?? "New"),
+            summary: String(row.summary ?? "No summary"),
+          }))
+        : [];
+
+      const mappedLeads: LeadRow[] = Array.isArray(leadsRes)
+        ? leadsRes.map((row: any) => ({
+            id: String(row.id ?? ""),
+            tenant_id: row.tenant_id ? String(row.tenant_id) : undefined,
+            tenant_name: row.tenant_name ? String(row.tenant_name) : undefined,
+            name: String(row.name ?? "Unknown"),
+            niche: String(row.niche ?? "General"),
+            status: String(row.status ?? "New"),
+            business: String(row.business ?? ""),
+            issue: String(row.issue ?? "No issue captured"),
+            next_action: String(row.next_action ?? "Needs follow-up"),
+          }))
+        : [];
+
+      setCalls(mappedCalls);
+      setLeads(mappedLeads);
+
+      const recentCalls = Array.isArray(analyticsRes?.recent_calls)
+        ? analyticsRes.recent_calls
+        : [];
+      const pipelineStages = Array.isArray(analyticsRes?.pipeline?.stages)
+        ? analyticsRes.pipeline.stages
+        : [];
+
+      setTasks(
+        mappedLeads.slice(0, 20).map((lead) => ({
+          id: lead.id,
+          title: lead.issue || "Lead follow-up",
+          status: lead.status || "open",
+          priority: "medium",
+          due_at: null,
+          description: lead.next_action,
+          contact_name: lead.name,
+        }))
+      );
+
+      setDeals(
+        pipelineStages.map((stage: any, idx: number) => ({
+          id: `${stage.stage}-${idx}`,
+          title: stage.stage,
+          stage: stage.stage,
+          status: "open",
+          estimated_value: null,
+          probability: null,
+          contact_name: "",
+        }))
+      );
+
+      setContacts(
+        mappedLeads.map((lead) => ({
+          id: lead.id,
+          name: lead.name,
+          email: null,
+          phone: null,
+          company: lead.business,
+          created_at: null,
+        }))
+      );
+
+      if (!recentCalls.length && mappedCalls.length) {
+        setCalls(mappedCalls);
+      }
     } catch (err: any) {
       console.error(err);
       setError(err?.message || "Failed to load tenant data.");
+      setSummary({
+        calls_today: 0,
+        booked_meetings: 0,
+        missed_calls_recovered: 0,
+        active_clients: 0,
+      });
+      setCalls([]);
+      setLeads([]);
+      setTasks([]);
+      setDeals([]);
+      setContacts([]);
     } finally {
+      setLoading(false);
       setRefreshing(false);
     }
   }
 
   useEffect(() => {
-    loadBase();
+    loadAuth();
   }, []);
 
   useEffect(() => {
-    if (selectedTenantId) {
-      loadTenantData(selectedTenantId);
+    if (selectedTenantKey) {
+      loadTenantData(selectedTenantKey);
     }
-  }, [selectedTenantId]);
+  }, [selectedTenantKey]);
 
   const filteredCalls = useMemo(() => {
     const q = search.toLowerCase();
@@ -530,12 +500,10 @@ export default function DashboardPage() {
       !q
         ? true
         : [
-            fullName(call.contact?.first_name, call.contact?.last_name, ""),
+            call.caller_name,
             call.caller_phone,
-            call.caller_email,
             call.summary,
             call.outcome,
-            call.qualification_status,
           ]
             .join(" ")
             .toLowerCase()
@@ -551,11 +519,8 @@ export default function DashboardPage() {
         : [
             deal.title,
             deal.status,
-            deal.source,
-            deal.stage?.name,
-            deal.stage?.stage_key,
-            fullName(deal.contact?.first_name, deal.contact?.last_name, ""),
-            deal.contact?.email,
+            deal.stage,
+            deal.contact_name,
           ]
             .join(" ")
             .toLowerCase()
@@ -573,8 +538,7 @@ export default function DashboardPage() {
             task.description,
             task.status,
             task.priority,
-            fullName(task.contact?.first_name, task.contact?.last_name, ""),
-            task.contact?.email,
+            task.contact_name,
           ]
             .join(" ")
             .toLowerCase()
@@ -587,12 +551,7 @@ export default function DashboardPage() {
     return contacts.filter((contact) =>
       !q
         ? true
-        : [
-            fullName(contact.first_name, contact.last_name, ""),
-            contact.email,
-            contact.phone,
-            contact.company,
-          ]
+        : [contact.name, contact.email, contact.phone, contact.company]
             .join(" ")
             .toLowerCase()
             .includes(q)
@@ -600,18 +559,14 @@ export default function DashboardPage() {
   }, [contacts, search]);
 
   const metrics = useMemo(() => {
-    const today = startOfToday();
-
     const totalContacts = contacts.length;
-    const openDeals = deals.filter((deal) => deal.status === "open").length;
+    const openDeals = deals.length;
     const pipelineValue = deals.reduce(
       (sum, deal) => sum + Number(deal.estimated_value || 0),
       0
     );
-    const tasksDue = tasks.filter(
-      (task) => task.status === "open" && task.due_at && new Date(task.due_at) >= today
-    ).length;
-    const callsToday = calls.filter((call) => new Date(call.created_at) >= today).length;
+    const tasksDue = tasks.length;
+    const callsToday = summary.calls_today || 0;
 
     return {
       totalContacts,
@@ -620,7 +575,7 @@ export default function DashboardPage() {
       tasksDue,
       callsToday,
     };
-  }, [contacts, deals, tasks, calls]);
+  }, [contacts, deals, tasks, summary]);
 
   const callTrend = useMemo(() => {
     const map = new Map<string, { day: string; calls: number; booked: number }>();
@@ -638,7 +593,8 @@ export default function DashboardPage() {
     }
 
     for (const call of calls) {
-      const key = new Date(call.created_at).toISOString().slice(0, 10);
+      if (!call.time) continue;
+      const key = new Date(call.time).toISOString().slice(0, 10);
       if (map.has(key)) {
         const row = map.get(key)!;
         row.calls += 1;
@@ -653,15 +609,15 @@ export default function DashboardPage() {
 
   const pipelineChart = useMemo(() => {
     const stageCounts = new Map<string, number>();
-    for (const deal of deals) {
-      const label = deal.stage?.name || deal.stage?.stage_key || "Unknown";
+    for (const lead of leads) {
+      const label = lead.status || "Unknown";
       stageCounts.set(label, (stageCounts.get(label) || 0) + 1);
     }
     return Array.from(stageCounts.entries()).map(([stage, count]) => ({
       stage,
       count,
     }));
-  }, [deals]);
+  }, [leads]);
 
   const summaryCards = [
     {
@@ -699,6 +655,14 @@ export default function DashboardPage() {
       .slice(0, 2)
       .toUpperCase();
   }, [profile]);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-600">
+        Checking session...
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -747,11 +711,11 @@ export default function DashboardPage() {
 
                 <div className="mt-4 space-y-2 text-sm text-slate-200">
                   <div className="font-medium text-white">
-                    {selectedTenant?.display_name || selectedTenant?.name || "No tenant selected"}
+                    {selectedTenant?.name || "No tenant selected"}
                   </div>
-                  <div>{selectedTenant?.industry || "General"}</div>
+                  <div>{selectedTenant?.role || "member"}</div>
                   <div className="text-slate-300">
-                    {profile?.global_role === "platform_admin"
+                    {(profile?.global_role || "").toLowerCase() === "platform_admin"
                       ? "Platform admin access"
                       : "Tenant-scoped access"}
                   </div>
@@ -759,8 +723,8 @@ export default function DashboardPage() {
 
                 <Button
                   className="mt-5 w-full rounded-2xl bg-white text-slate-900 hover:bg-slate-100"
-                  onClick={() => selectedTenantId && loadTenantData(selectedTenantId)}
-                  disabled={refreshing || !selectedTenantId}
+                  onClick={() => selectedTenantKey && loadTenantData(selectedTenantKey)}
+                  disabled={refreshing || !selectedTenantKey}
                 >
                   <RefreshCcw className="mr-2 h-4 w-4" />
                   {refreshing ? "Refreshing..." : "Refresh"}
@@ -775,10 +739,10 @@ export default function DashboardPage() {
             <div className="flex flex-col gap-4 px-6 py-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h1 className="text-2xl font-semibold tracking-tight">
-                  {selectedTenant?.display_name || selectedTenant?.name || "Dashboard"}
+                  {selectedTenant?.name || "Dashboard"}
                 </h1>
                 <p className="text-sm text-slate-500">
-                  Real calls, deals, tasks, and contacts from your live Supabase workspace.
+                  Real calls, deals, tasks, and contacts from your own backend workspace.
                 </p>
               </div>
 
@@ -793,14 +757,14 @@ export default function DashboardPage() {
                   />
                 </div>
 
-                <Select value={selectedTenantId} onValueChange={setSelectedTenantId}>
+                <Select value={selectedTenantKey} onValueChange={setSelectedTenantKey}>
                   <SelectTrigger className="w-[260px] rounded-2xl border-slate-200">
                     <SelectValue placeholder="Select tenant" />
                   </SelectTrigger>
                   <SelectContent>
                     {tenantOptions.map((tenant) => (
-                      <SelectItem key={tenant.id} value={tenant.id}>
-                        {tenant.display_name || tenant.name}
+                      <SelectItem key={tenant.id} value={tenant.tenant_key}>
+                        {tenant.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -843,13 +807,13 @@ export default function DashboardPage() {
               </div>
             ) : null}
 
-            {!loading && !selectedTenantId ? (
+            {!loading && !selectedTenantKey ? (
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
                 No tenant is available for this user yet.
               </div>
             ) : null}
 
-            {!loading && selectedTenantId && page === "overview" && (
+            {!loading && selectedTenantKey && page === "overview" && (
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                   {summaryCards.map((card) => (
@@ -892,10 +856,10 @@ export default function DashboardPage() {
                               <div>
                                 <div className="font-medium">{task.title}</div>
                                 <div className="text-sm text-slate-500">
-                                  {fullName(task.contact?.first_name, task.contact?.last_name, "Unassigned contact")}
+                                  {task.contact_name || "Unassigned contact"}
                                 </div>
                               </div>
-                              <Badge variant="secondary">{task.priority}</Badge>
+                              <Badge variant="secondary">{task.priority || "medium"}</Badge>
                             </div>
                             <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
                               <Clock3 className="h-3.5 w-3.5" />
@@ -943,22 +907,20 @@ export default function DashboardPage() {
                           {filteredCalls.slice(0, 8).map((call) => (
                             <TableRow key={call.id}>
                               <TableCell>
-                                <div className="font-medium">
-                                  {fullName(call.contact?.first_name, call.contact?.last_name, "Unknown Caller")}
-                                </div>
+                                <div className="font-medium">{call.caller_name}</div>
                                 <div className="text-xs text-slate-500">
-                                  {call.caller_phone || call.caller_email || "—"}
+                                  {call.caller_phone || "—"}
                                 </div>
                               </TableCell>
                               <TableCell>
-                                <div>{formatTime(call.created_at)}</div>
+                                <div>{formatTime(call.time)}</div>
                                 <div className="text-xs text-slate-500">
                                   {formatDuration(call.duration_seconds)}
                                 </div>
                               </TableCell>
                               <TableCell>
                                 <Badge variant="secondary">
-                                  {call.outcome || call.qualification_status || "New"}
+                                  {call.outcome || "New"}
                                 </Badge>
                               </TableCell>
                               <TableCell className="max-w-[320px] truncate">
@@ -994,7 +956,7 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
-            {!loading && selectedTenantId && page === "calls" && (
+            {!loading && selectedTenantKey && page === "calls" && (
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                 <SectionTitle
                   title="Calls"
@@ -1016,18 +978,16 @@ export default function DashboardPage() {
                         {filteredCalls.map((call) => (
                           <TableRow key={call.id}>
                             <TableCell>
-                              <div className="font-medium">
-                                {fullName(call.contact?.first_name, call.contact?.last_name, "Unknown Caller")}
-                              </div>
+                              <div className="font-medium">{call.caller_name}</div>
                               <div className="text-xs text-slate-500">
-                                {call.caller_phone || call.caller_email || "—"}
+                                {call.caller_phone || "—"}
                               </div>
                             </TableCell>
-                            <TableCell>{formatDateTime(call.created_at)}</TableCell>
+                            <TableCell>{formatDateTime(call.time)}</TableCell>
                             <TableCell>{formatDuration(call.duration_seconds)}</TableCell>
                             <TableCell>
                               <Badge variant="secondary">
-                                {call.outcome || call.qualification_status || "New"}
+                                {call.outcome || "New"}
                               </Badge>
                             </TableCell>
                             <TableCell className="max-w-[360px] truncate">
@@ -1042,7 +1002,7 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
-            {!loading && selectedTenantId && page === "deals" && (
+            {!loading && selectedTenantKey && page === "deals" && (
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                 <SectionTitle
                   title="Deals"
@@ -1065,12 +1025,10 @@ export default function DashboardPage() {
                         {filteredDeals.map((deal) => (
                           <TableRow key={deal.id}>
                             <TableCell className="font-medium">{deal.title}</TableCell>
+                            <TableCell>{deal.contact_name || "—"}</TableCell>
+                            <TableCell>{deal.stage || "—"}</TableCell>
                             <TableCell>
-                              {fullName(deal.contact?.first_name, deal.contact?.last_name, "—")}
-                            </TableCell>
-                            <TableCell>{deal.stage?.name || deal.stage?.stage_key || "—"}</TableCell>
-                            <TableCell>
-                              <Badge variant="secondary">{deal.status}</Badge>
+                              <Badge variant="secondary">{deal.status || "open"}</Badge>
                             </TableCell>
                             <TableCell>{formatCurrency(deal.estimated_value)}</TableCell>
                             <TableCell>{deal.probability ?? 0}%</TableCell>
@@ -1083,7 +1041,7 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
-            {!loading && selectedTenantId && page === "tasks" && (
+            {!loading && selectedTenantKey && page === "tasks" && (
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                 <SectionTitle
                   title="Tasks"
@@ -1110,14 +1068,12 @@ export default function DashboardPage() {
                                 {task.description || "—"}
                               </div>
                             </TableCell>
-                            <TableCell>
-                              {fullName(task.contact?.first_name, task.contact?.last_name, "—")}
-                            </TableCell>
+                            <TableCell>{task.contact_name || "—"}</TableCell>
                             <TableCell>
                               <Badge variant="secondary">{task.status}</Badge>
                             </TableCell>
                             <TableCell>
-                              <Badge variant="outline">{task.priority}</Badge>
+                              <Badge variant="outline">{task.priority || "medium"}</Badge>
                             </TableCell>
                             <TableCell>{formatDateTime(task.due_at)}</TableCell>
                           </TableRow>
@@ -1129,7 +1085,7 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
-            {!loading && selectedTenantId && page === "contacts" && (
+            {!loading && selectedTenantKey && page === "contacts" && (
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                 <SectionTitle
                   title="Contacts"
@@ -1150,9 +1106,7 @@ export default function DashboardPage() {
                       <TableBody>
                         {filteredContacts.map((contact) => (
                           <TableRow key={contact.id}>
-                            <TableCell className="font-medium">
-                              {fullName(contact.first_name, contact.last_name, "Unknown")}
-                            </TableCell>
+                            <TableCell className="font-medium">{contact.name}</TableCell>
                             <TableCell>{contact.email || "—"}</TableCell>
                             <TableCell>{contact.phone || "—"}</TableCell>
                             <TableCell>{contact.company || "—"}</TableCell>
@@ -1166,7 +1120,7 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
-            {!loading && selectedTenantId && page === "settings" && (
+            {!loading && selectedTenantKey && page === "settings" && (
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                 <SectionTitle
                   title="Settings"
@@ -1183,18 +1137,18 @@ export default function DashboardPage() {
                         <div className="space-y-2">
                           <div>
                             <span className="font-medium text-slate-900">Tenant:</span>{" "}
-                            {selectedTenant?.display_name || selectedTenant?.name || "—"}
+                            {selectedTenant?.name || "—"}
                           </div>
                           <div>
                             <span className="font-medium text-slate-900">Tenant key:</span>{" "}
                             {selectedTenant?.tenant_key || "—"}
                           </div>
                           <div>
-                            <span className="font-medium text-slate-900">Industry:</span>{" "}
-                            {selectedTenant?.industry || "General"}
+                            <span className="font-medium text-slate-900">Membership role:</span>{" "}
+                            {selectedTenant?.role || "member"}
                           </div>
                           <div>
-                            <span className="font-medium text-slate-900">Role:</span>{" "}
+                            <span className="font-medium text-slate-900">Global role:</span>{" "}
                             {profile?.global_role || "member"}
                           </div>
                         </div>
@@ -1219,7 +1173,7 @@ export default function DashboardPage() {
                       {[
                         {
                           label: "Tenant selected",
-                          done: !!selectedTenantId,
+                          done: !!selectedTenantKey,
                         },
                         {
                           label: "Contacts loaded",
@@ -1230,8 +1184,8 @@ export default function DashboardPage() {
                           done: calls.length > 0,
                         },
                         {
-                          label: "Deals loaded",
-                          done: deals.length > 0,
+                          label: "Leads loaded",
+                          done: leads.length > 0,
                         },
                       ].map((item) => (
                         <div

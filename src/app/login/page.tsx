@@ -1,7 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { apiFetch } from "@/lib/api";
+
+type LoginResponse = {
+  ok?: boolean;
+  error?: string;
+  user?: {
+    id: string;
+    email: string;
+    global_role: string;
+  };
+};
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -12,36 +22,35 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const res = await apiFetch("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          password,
+        }),
+      });
 
-    if (error) {
+      const data: LoginResponse = await res.json();
+
       setLoading(false);
-      alert(error.message);
-      return;
-    }
 
-    // get the logged in user
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+      if (!res.ok || !data.ok || !data.user) {
+        alert(data.error || "Login failed");
+        return;
+      }
 
-    setLoading(false);
+      const role = (data.user.global_role || "").toLowerCase();
 
-    if (!user) {
-      alert("Unable to load user.");
-      return;
-    }
-
-    // check role from Supabase metadata
-    const role = user.app_metadata?.role;
-
-    if (role === "admin") {
-      window.location.href = "/admin";
-    } else {
-      window.location.href = "/dashboard";
+      if (role === "platform_admin" || role === "admin") {
+        window.location.href = "/admin";
+      } else {
+        window.location.href = "/dashboard";
+      }
+    } catch (err) {
+      console.error(err);
+      setLoading(false);
+      alert("Unable to sign in right now.");
     }
   };
 
@@ -49,9 +58,6 @@ export default function LoginPage() {
     <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
       <div className="w-full max-w-md">
         <div className="bg-white rounded-3xl shadow-xl border border-slate-200 p-8">
-
-          {/* LOGO + TITLE */}
-
           <div className="flex flex-col items-center text-center">
             <img
               src="/confluxa-logo.png"
@@ -68,10 +74,7 @@ export default function LoginPage() {
             </p>
           </div>
 
-          {/* LOGIN FORM */}
-
           <form onSubmit={login} className="mt-8 space-y-4">
-
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">
                 Email
@@ -109,15 +112,11 @@ export default function LoginPage() {
             >
               {loading ? "Signing in..." : "Sign in"}
             </button>
-
           </form>
-
-          {/* FOOTER */}
 
           <p className="text-center text-sm text-slate-500 mt-6">
             Secure access to your Confluxa dashboard
           </p>
-
         </div>
       </div>
     </div>

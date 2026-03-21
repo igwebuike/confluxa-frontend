@@ -1,5 +1,8 @@
 "use client";
 
+import CallTranscriptModal, {
+  type CallTranscriptDetail,
+} from "@/components/CallTranscriptModal";
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
@@ -18,17 +21,20 @@ import {
   AlertTriangle,
   CheckCircle2,
   RefreshCcw,
+  ArrowUpRight,
   DollarSign,
+  X,
   Wrench,
+  Link2,
   LifeBuoy,
+  FileWarning,
   ChevronRight,
   ExternalLink,
+  Eye,
   BarChart3,
   TrendingUp,
-  Briefcase,
   LogOut,
 } from "lucide-react";
-import { getSupabaseClient } from "@/lib/supabase";
 
 import {
   Card,
@@ -40,6 +46,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -69,125 +81,142 @@ import {
   Bar,
 } from "recharts";
 
-type Profile = {
-  id: string;
-  email: string | null;
-  full_name: string | null;
-  global_role: string;
+type Summary = {
+  calls_today: number;
+  booked_meetings: number;
+  missed_calls_recovered: number;
+  active_clients: number;
+  calls_today_note?: string;
+  booked_meetings_note?: string;
+  missed_calls_recovered_note?: string;
+  active_clients_note?: string;
 };
 
-type Tenant = {
+type CallRow = {
   id: string;
-  tenant_key: string;
+  tenant_id?: string;
+  tenant_name: string;
+  caller_name: string;
+  caller_phone: string;
+  time: string;
+  outcome: string;
+  summary: string;
+};
+
+type LeadRow = {
+  id: string;
+  tenant_id?: string;
+  tenant_name: string;
   name: string;
-  display_name: string | null;
-  industry: string | null;
-  status: string | null;
-  is_active?: boolean | null;
+  niche: string;
+  status: string;
+  business: string;
+  issue: string;
+  next_action: string;
+};
+
+type TenantRow = {
+  id: string;
+  tenant_key?: string;
+  name: string;
+  phone_number: string;
+  status: string;
+  calls: number;
+  booked: number;
+  recovered: number;
+};
+
+type FailureRow = {
+  label: string;
+  value: number;
+  tone: string;
+};
+
+type Health = {
+  voice_routing: string;
+  webhook_health: string;
+  email_delivery: string;
+  email_retries: number;
+  failures: FailureRow[];
+  onboarding_progress?: {
+    label: string;
+    description: string;
+    percent: number;
+  };
+  admin_view?: boolean;
+};
+
+type TenantPhoneNumber = {
+  id: string;
+  tenant_id: string;
+  label: string;
+  country_code: string;
+  phone_number: string;
+  phone_e164?: string;
+  notification_email?: string;
+  delivery_mode?: string;
+  is_active: boolean;
+  is_primary: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+
+type TenantRecipient = {
+  id: string;
+  email: string;
+  notification_type: string;
+  is_active: boolean;
   created_at?: string;
 };
 
-type Contact = {
-  id: string;
-  tenant_id: string;
-  first_name: string | null;
-  last_name: string | null;
-  email: string | null;
-  phone: string | null;
-  company: string | null;
-  created_at: string;
+type TenantDetail = {
+  ok: boolean;
+  tenant?: {
+    id: string;
+    tenant_key: string;
+    name: string;
+    display_name?: string;
+    is_active: boolean;
+    created_at?: string;
+  };
+  phone_numbers?: TenantPhoneNumber[];
+  notification_recipients?: TenantRecipient[];
+  stats?: {
+    calls: number;
+    contacts: number;
+    integrations: number;
+  };
+  error?: string;
 };
 
-type PipelineStage = {
-  id: string;
-  tenant_id: string;
-  name: string;
-  stage_key: string;
-  position: number;
-};
-
-type Deal = {
-  id: string;
-  tenant_id: string;
-  contact_id: string | null;
-  title: string;
-  status: string;
-  source: string | null;
-  estimated_value: number | null;
-  probability: number | null;
-  created_at: string;
-  last_activity_at: string | null;
-  stage_id: string | null;
-};
-
-type Task = {
-  id: string;
-  tenant_id: string;
-  contact_id: string | null;
-  deal_id: string | null;
-  title: string;
-  description: string | null;
-  status: string;
-  priority: string;
-  due_at: string | null;
-  created_at: string;
-};
-
-type Call = {
-  id: string;
-  tenant_id: string;
-  contact_id: string | null;
-  external_call_id: string | null;
-  direction: string | null;
-  caller_phone: string | null;
-  caller_email: string | null;
-  called_number: string | null;
-  duration_seconds: number | null;
-  summary: string | null;
-  transcript: string | null;
-  outcome: string | null;
-  qualification_status: string | null;
-  created_at: string;
-};
-
-type TenantStatRow = {
+type AuthTenant = {
   id: string;
   tenant_key: string;
-  name: string;
-  industry: string;
-  status: string;
-  contacts: number;
-  calls: number;
-  openDeals: number;
-  tasksDue: number;
-  booked: number;
-  recovered: number;
-  pipelineValue: number;
-  bookRate: number;
-  recoveryRate: number;
+  tenant_name: string;
+  role?: string;
 };
 
-type SystemHealth = {
-  ok?: boolean;
-  voice_routing?: string;
-  webhook_health?: string;
-  email_delivery?: string;
-  stats?: {
-    tenants_total?: number;
-    tenants_active?: number;
-    calls_last_24h?: number;
-    open_tasks?: number;
-    open_deals?: number;
-  };
-  version?: string;
+type AuthUser = {
+  id: string;
+  email: string;
+  full_name?: string;
+  global_role?: string;
+  is_active?: boolean;
+};
+
+type AuthMeResponse = {
+  ok: boolean;
+  user?: AuthUser;
+  tenants?: AuthTenant[];
+  error?: string;
+  detail?: string;
 };
 
 type AdminSection =
   | "overview"
   | "tenants"
   | "calls"
-  | "deals"
-  | "tasks"
+  | "leads"
   | "system"
   | "settings";
 
@@ -198,6 +227,18 @@ type TrendPoint = {
   label: string;
   calls: number;
   booked: number;
+  recovered: number;
+};
+
+type TenantAnalyticsRow = {
+  id: string;
+  name: string;
+  status: string;
+  calls: number;
+  booked: number;
+  recovered: number;
+  bookRate: number;
+  recoveryRate: number;
 };
 
 const API_BASE =
@@ -211,7 +252,14 @@ const APP_BASE =
 const ADMIN_SECRET =
   process.env.NEXT_PUBLIC_ADMIN_SECRET?.trim() || "";
 
-function fmtDateTime(value?: string | null) {
+const emptySummary: Summary = {
+  calls_today: 0,
+  booked_meetings: 0,
+  missed_calls_recovered: 0,
+  active_clients: 0,
+};
+
+function fmtTime(value?: string) {
   if (!value) return "—";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
@@ -223,23 +271,6 @@ function fmtDateTime(value?: string | null) {
   });
 }
 
-function fmtCurrency(value?: number | null) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(value || 0);
-}
-
-function shortDayLabel(date: Date) {
-  return date.toLocaleDateString([], { month: "short", day: "numeric" });
-}
-
-function fullName(first?: string | null, last?: string | null, fallback = "Unknown") {
-  const name = [first || "", last || ""].join(" ").trim();
-  return name || fallback;
-}
-
 function statusTone(status?: string) {
   const s = (status || "").toLowerCase();
   if (
@@ -247,7 +278,8 @@ function statusTone(status?: string) {
     s.includes("healthy") ||
     s.includes("booked") ||
     s.includes("qualified") ||
-    s.includes("open")
+    s.includes("owner") ||
+    s.includes("admin")
   ) {
     return "bg-emerald-100 text-emerald-800 border-emerald-200";
   }
@@ -255,8 +287,7 @@ function statusTone(status?: string) {
     s.includes("new") ||
     s.includes("retry") ||
     s.includes("onboarding") ||
-    s.includes("needs") ||
-    s.includes("pending")
+    s.includes("needs")
   ) {
     return "bg-amber-100 text-amber-900 border-amber-200";
   }
@@ -264,19 +295,22 @@ function statusTone(status?: string) {
     s.includes("inactive") ||
     s.includes("failed") ||
     s.includes("alert") ||
-    s.includes("miss") ||
-    s.includes("closed")
+    s.includes("miss")
   ) {
     return "bg-red-100 text-red-800 border-red-200";
   }
   return "bg-slate-100 text-slate-700 border-slate-200";
 }
 
-function isBookedOutcome(outcome?: string | null) {
+function shortDayLabel(date: Date) {
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function isBookedOutcome(outcome?: string) {
   return (outcome || "").toLowerCase().includes("book");
 }
 
-function isRecoveredOutcome(outcome?: string | null) {
+function isRecoveredOutcome(outcome?: string) {
   const s = (outcome || "").toLowerCase();
   return (
     s.includes("qual") ||
@@ -370,8 +404,7 @@ function ModalShell({
             className="rounded-2xl"
             onClick={onClose}
           >
-            <span className="sr-only">Close</span>
-            ×
+            <X className="h-4 w-4" />
           </Button>
         </div>
         <div className="p-6">{children}</div>
@@ -380,19 +413,25 @@ function ModalShell({
   );
 }
 
+async function apiFetch(path: string, init: RequestInit = {}) {
+  const headers = new Headers(init.headers || {});
+  if (!headers.has("Content-Type") && !(init.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  return fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers,
+    credentials: "include",
+  });
+}
+
 export default function ConfluxaAdminPage() {
-  const supabase = getSupabaseClient();
-
-  const [profile, setProfile] = useState<Profile | null>(null);
-
-  const [tenants, setTenants] = useState<Tenant[]>([]);
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [deals, setDeals] = useState<Deal[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [calls, setCalls] = useState<Call[]>([]);
-  const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([]);
-
-  const [health, setHealth] = useState<SystemHealth | null>(null);
+  const [summary, setSummary] = useState<Summary>(emptySummary);
+  const [calls, setCalls] = useState<CallRow[]>([]);
+  const [leads, setLeads] = useState<LeadRow[]>([]);
+  const [tenants, setTenants] = useState<TenantRow[]>([]);
+  const [health, setHealth] = useState<Health | null>(null);
 
   const [section, setSection] = useState<AdminSection>("overview");
   const [query, setQuery] = useState("");
@@ -400,16 +439,33 @@ export default function ConfluxaAdminPage() {
   const [analyticsWindow, setAnalyticsWindow] = useState<AnalyticsWindow>("30");
 
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [savingTenant, setSavingTenant] = useState(false);
+  const [loadingTenantDetail, setLoadingTenantDetail] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
   const [error, setError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
 
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authTenants, setAuthTenants] = useState<AuthTenant[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
+
   const [showNewTenantModal, setShowNewTenantModal] = useState(false);
+  const [showTenantDetailModal, setShowTenantDetailModal] = useState(false);
+
+  const [selectedTenantId, setSelectedTenantId] = useState<string>("");
+  const [selectedTenantDetail, setSelectedTenantDetail] =
+    useState<TenantDetail | null>(null);
+  const [showTranscriptModal, setShowTranscriptModal] = useState(false);
+  const [loadingTranscript, setLoadingTranscript] = useState(false);
+  const [selectedCallDetail, setSelectedCallDetail] =
+    useState<CallTranscriptDetail | null>(null);
+
   const [newTenant, setNewTenant] = useState({
-    name: "",
-    display_name: "",
-    industry: "general",
-    status: "active",
+    business_name: "",
+    notification_email: "",
+    phone_number: "",
+    industry: "hvac",
+    delivery_mode: "email",
   });
 
   function getAdminHeaders() {
@@ -419,21 +475,54 @@ export default function ConfluxaAdminPage() {
   }
 
   async function handleLogout() {
-    await supabase.auth.signOut();
-    window.location.replace("/login");
-  }
-
-  async function loadSystemHealth() {
     try {
-      const res = await fetch(`${API_BASE}/api/system/health`, {
+      await apiFetch("/auth/logout", {
+        method: "POST",
         headers: getAdminHeaders(),
       });
-      const data = await res.json();
-      if (res.ok) {
-        setHealth(data);
-      }
     } catch (e) {
       console.error(e);
+    } finally {
+      window.location.replace("/login");
+    }
+  }
+
+  async function loadAuth() {
+    setAuthLoading(true);
+    setError("");
+
+    try {
+      const res = await apiFetch("/auth/me", {
+        method: "GET",
+        headers: getAdminHeaders(),
+      });
+
+      const data: AuthMeResponse = await res.json();
+
+      if (!res.ok || !data.ok || !data.user) {
+        window.location.replace("/login");
+        return false;
+      }
+
+      const role = (data.user.global_role || "").toLowerCase();
+      const allowed = role === "platform_admin" || role === "admin";
+
+      if (!allowed) {
+        window.location.replace("/dashboard");
+        return false;
+      }
+
+      setAuthUser(data.user);
+      setAuthTenants(Array.isArray(data.tenants) ? data.tenants : []);
+      setIsAdmin(true);
+      return true;
+    } catch (e) {
+      console.error(e);
+      setError("Could not verify session.");
+      window.location.replace("/login");
+      return false;
+    } finally {
+      setAuthLoading(false);
     }
   }
 
@@ -442,277 +531,151 @@ export default function ConfluxaAdminPage() {
     setError("");
 
     try {
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
+      const headers = getAdminHeaders();
 
-      if (authError || !user) {
-        window.location.replace("/login");
-        return;
-      }
+      const [summaryRes, callsRes, leadsRes, tenantsRes, healthRes] =
+        await Promise.all([
+          apiFetch("/api/dashboard/summary", { headers }).then((r) => r.json()),
+          apiFetch("/api/calls?limit=200", { headers }).then((r) => r.json()),
+          apiFetch("/api/leads?limit=200", { headers }).then((r) => r.json()),
+          apiFetch("/api/tenants", { headers }).then((r) => r.json()),
+          apiFetch("/api/system/health", { headers }).then((r) => r.json()),
+        ]);
 
-      const { data: profileData, error: profileError } = await supabase
-        .from("profiles")
-        .select("id, email, full_name, global_role")
-        .eq("id", user.id)
-        .single();
-
-      if (profileError) throw profileError;
-      if (profileData.global_role !== "platform_admin") {
-        setError("This page is only for platform admins.");
-        setLoading(false);
-        return;
-      }
-
-      setProfile(profileData);
-
-      const [
-        tenantsRes,
-        contactsRes,
-        dealsRes,
-        tasksRes,
-        callsRes,
-        stagesRes,
-      ] = await Promise.all([
-        supabase
-          .from("tenants")
-          .select("id, tenant_key, name, display_name, industry, status, is_active, created_at")
-          .order("created_at", { ascending: true }),
-
-        supabase
-          .from("contacts")
-          .select("id, tenant_id, first_name, last_name, email, phone, company, created_at")
-          .limit(5000),
-
-        supabase
-          .from("deals")
-          .select("id, tenant_id, contact_id, title, status, source, estimated_value, probability, created_at, last_activity_at, stage_id")
-          .limit(5000),
-
-        supabase
-          .from("tasks")
-          .select("id, tenant_id, contact_id, deal_id, title, description, status, priority, due_at, created_at")
-          .limit(5000),
-
-        supabase
-          .from("calls")
-          .select("id, tenant_id, contact_id, external_call_id, direction, caller_phone, caller_email, called_number, duration_seconds, summary, transcript, outcome, qualification_status, created_at")
-          .limit(5000),
-
-        supabase
-          .from("pipeline_stages")
-          .select("id, tenant_id, name, stage_key, position")
-          .limit(2000),
-      ]);
-
-      if (tenantsRes.error) throw tenantsRes.error;
-      if (contactsRes.error) throw contactsRes.error;
-      if (dealsRes.error) throw dealsRes.error;
-      if (tasksRes.error) throw tasksRes.error;
-      if (callsRes.error) throw callsRes.error;
-      if (stagesRes.error) throw stagesRes.error;
-
-      setTenants((tenantsRes.data || []) as Tenant[]);
-      setContacts((contactsRes.data || []) as Contact[]);
-      setDeals((dealsRes.data || []) as Deal[]);
-      setTasks((tasksRes.data || []) as Task[]);
-      setCalls((callsRes.data || []) as Call[]);
-      setPipelineStages((stagesRes.data || []) as PipelineStage[]);
-
-      await loadSystemHealth();
-    } catch (e: any) {
+      setSummary(summaryRes || emptySummary);
+      setCalls(Array.isArray(callsRes) ? callsRes : []);
+      setLeads(Array.isArray(leadsRes) ? leadsRes : []);
+      setTenants(Array.isArray(tenantsRes) ? tenantsRes : []);
+      setHealth(healthRes || null);
+    } catch (e) {
       console.error(e);
-      setError(e?.message || "Could not load admin dashboard.");
+      setError(
+        "Could not load admin data. Check backend auth, admin secret, and API health."
+      );
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    loadData();
+    (async () => {
+      const ok = await loadAuth();
+      if (ok) {
+        await loadData();
+      }
+    })();
   }, []);
 
-  async function refreshAll() {
-    setRefreshing(true);
-    await loadData();
-    setRefreshing(false);
-  }
+  const filteredCalls = useMemo(() => {
+    return calls.filter((item) => {
+      const matchesTenant =
+        tenantFilter === "all" ||
+        item.tenant_name?.toLowerCase() === tenantFilter.toLowerCase() ||
+        item.tenant_id === tenantFilter;
 
-  const tenantStats = useMemo<TenantStatRow[]>(() => {
-    return tenants.map((tenant) => {
-      const tenantContacts = contacts.filter((c) => c.tenant_id === tenant.id);
-      const tenantDeals = deals.filter((d) => d.tenant_id === tenant.id);
-      const tenantTasks = tasks.filter((t) => t.tenant_id === tenant.id);
-      const tenantCalls = calls.filter((c) => c.tenant_id === tenant.id);
+      const haystack = [
+        item.caller_name,
+        item.caller_phone,
+        item.tenant_name,
+        item.summary,
+        item.outcome,
+      ]
+        .join(" ")
+        .toLowerCase();
 
-      const openDeals = tenantDeals.filter((d) => d.status === "open").length;
-      const tasksDue = tenantTasks.filter(
-        (t) => t.status === "open" && t.due_at
-      ).length;
-      const booked = tenantCalls.filter((c) => isBookedOutcome(c.outcome)).length;
-      const recovered = tenantCalls.filter((c) =>
-        isRecoveredOutcome(c.outcome)
-      ).length;
-      const pipelineValue = tenantDeals.reduce(
-        (sum, d) => sum + Number(d.estimated_value || 0),
-        0
-      );
-      const callsCount = tenantCalls.length;
+      const matchesQuery = !query || haystack.includes(query.toLowerCase());
+      return matchesTenant && matchesQuery;
+    });
+  }, [calls, query, tenantFilter]);
+
+  const filteredLeads = useMemo(() => {
+    return leads.filter((item) => {
+      const matchesTenant =
+        tenantFilter === "all" ||
+        item.tenant_name?.toLowerCase() === tenantFilter.toLowerCase() ||
+        item.tenant_id === tenantFilter;
+
+      const haystack = [
+        item.name,
+        item.business,
+        item.issue,
+        item.status,
+        item.next_action,
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      const matchesQuery = !query || haystack.includes(query.toLowerCase());
+      return matchesTenant && matchesQuery;
+    });
+  }, [leads, query, tenantFilter]);
+
+  const filteredTenants = useMemo(() => {
+    return tenants.filter((tenant) => {
+      const matchesTenant =
+        tenantFilter === "all" ||
+        tenant.name?.toLowerCase() === tenantFilter.toLowerCase() ||
+        tenant.id === tenantFilter;
+
+      const haystack = [tenant.name, tenant.phone_number, tenant.status]
+        .join(" ")
+        .toLowerCase();
+
+      const matchesQuery = !query || haystack.includes(query.toLowerCase());
+      return matchesTenant && matchesQuery;
+    });
+  }, [tenants, query, tenantFilter]);
+
+  const tenantsNeedingAttention = useMemo(() => {
+    const failureCount = (health?.failures || []).reduce(
+      (acc, item) => acc + (item.value > 0 ? 1 : 0),
+      0
+    );
+    return failureCount;
+  }, [health]);
+
+  const monthlyAgencyMrr = useMemo(() => {
+    return (
+      tenants.filter((t) => t.status.toLowerCase().includes("active")).length *
+      1500
+    );
+  }, [tenants]);
+
+  const setupFeesThisMonth = useMemo(() => {
+    return tenants.length * 500;
+  }, [tenants]);
+
+  const analyticsFilteredTenants = useMemo(() => {
+    if (tenantFilter === "all") return tenants;
+    return tenants.filter(
+      (tenant) =>
+        tenant.id === tenantFilter ||
+        tenant.name.toLowerCase() === tenantFilter.toLowerCase()
+    );
+  }, [tenants, tenantFilter]);
+
+  const analyticsTenantRows = useMemo<TenantAnalyticsRow[]>(() => {
+    const rows = analyticsFilteredTenants.map((tenant) => {
+      const callsCount = Number(tenant.calls || 0);
+      const bookedCount = Number(tenant.booked || 0);
+      const recoveredCount = Number(tenant.recovered || 0);
 
       return {
         id: tenant.id,
-        tenant_key: tenant.tenant_key,
-        name: tenant.display_name || tenant.name,
-        industry: tenant.industry || "general",
-        status:
-          tenant.status ||
-          (tenant.is_active ? "active" : "inactive") ||
-          "active",
-        contacts: tenantContacts.length,
+        name: tenant.name,
+        status: tenant.status,
         calls: callsCount,
-        openDeals,
-        tasksDue,
-        booked,
-        recovered,
-        pipelineValue,
-        bookRate: callsCount ? Math.round((booked / callsCount) * 100) : 0,
+        booked: bookedCount,
+        recovered: recoveredCount,
+        bookRate: callsCount ? Math.round((bookedCount / callsCount) * 100) : 0,
         recoveryRate: callsCount
-          ? Math.round((recovered / callsCount) * 100)
+          ? Math.round((recoveredCount / callsCount) * 100)
           : 0,
       };
     });
-  }, [tenants, contacts, deals, tasks, calls]);
 
-  const filteredTenantStats = useMemo(() => {
-    return tenantStats.filter((tenant) => {
-      const matchesTenant =
-        tenantFilter === "all" ||
-        tenant.id === tenantFilter ||
-        tenant.name.toLowerCase() === tenantFilter.toLowerCase();
-
-      const haystack = [
-        tenant.name,
-        tenant.tenant_key,
-        tenant.status,
-        tenant.industry,
-      ]
-        .join(" ")
-        .toLowerCase();
-
-      const matchesQuery = !query || haystack.includes(query.toLowerCase());
-      return matchesTenant && matchesQuery;
-    });
-  }, [tenantStats, tenantFilter, query]);
-
-  const filteredCalls = useMemo(() => {
-    return calls.filter((call) => {
-      const tenant = tenantStats.find((t) => t.id === call.tenant_id);
-      const matchesTenant =
-        tenantFilter === "all" ||
-        call.tenant_id === tenantFilter ||
-        tenant?.name.toLowerCase() === tenantFilter.toLowerCase();
-
-      const haystack = [
-        call.caller_phone,
-        call.caller_email,
-        call.summary,
-        call.outcome,
-        call.qualification_status,
-        tenant?.name,
-      ]
-        .join(" ")
-        .toLowerCase();
-
-      const matchesQuery = !query || haystack.includes(query.toLowerCase());
-      return matchesTenant && matchesQuery;
-    });
-  }, [calls, tenantStats, tenantFilter, query]);
-
-  const filteredDeals = useMemo(() => {
-    return deals.filter((deal) => {
-      const tenant = tenantStats.find((t) => t.id === deal.tenant_id);
-      const stage = pipelineStages.find((s) => s.id === deal.stage_id);
-      const matchesTenant =
-        tenantFilter === "all" ||
-        deal.tenant_id === tenantFilter ||
-        tenant?.name.toLowerCase() === tenantFilter.toLowerCase();
-
-      const haystack = [
-        deal.title,
-        deal.status,
-        deal.source,
-        stage?.name,
-        stage?.stage_key,
-        tenant?.name,
-      ]
-        .join(" ")
-        .toLowerCase();
-
-      const matchesQuery = !query || haystack.includes(query.toLowerCase());
-      return matchesTenant && matchesQuery;
-    });
-  }, [deals, tenantStats, pipelineStages, tenantFilter, query]);
-
-  const filteredTasks = useMemo(() => {
-    return tasks.filter((task) => {
-      const tenant = tenantStats.find((t) => t.id === task.tenant_id);
-      const matchesTenant =
-        tenantFilter === "all" ||
-        task.tenant_id === tenantFilter ||
-        tenant?.name.toLowerCase() === tenantFilter.toLowerCase();
-
-      const haystack = [
-        task.title,
-        task.description,
-        task.status,
-        task.priority,
-        tenant?.name,
-      ]
-        .join(" ")
-        .toLowerCase();
-
-      const matchesQuery = !query || haystack.includes(query.toLowerCase());
-      return matchesTenant && matchesQuery;
-    });
-  }, [tasks, tenantStats, tenantFilter, query]);
-
-  const summary = useMemo(() => {
-    const activeTenants = tenantStats.filter((t) =>
-      t.status.toLowerCase().includes("active")
-    ).length;
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const callsToday = calls.filter((c) => new Date(c.created_at) >= today).length;
-    const bookedMeetings = calls.filter((c) => isBookedOutcome(c.outcome)).length;
-    const missedRecovered = calls.filter((c) => isRecoveredOutcome(c.outcome)).length;
-
-    return {
-      callsToday,
-      bookedMeetings,
-      missedRecovered,
-      activeTenants,
-    };
-  }, [tenantStats, calls]);
-
-  const monthlyAgencyMrr = useMemo(() => {
-    return tenantStats.filter((t) => t.status.toLowerCase().includes("active")).length * 1500;
-  }, [tenantStats]);
-
-  const setupFeesThisMonth = useMemo(() => {
-    return tenantStats.length * 500;
-  }, [tenantStats]);
-
-  const tenantsNeedingAttention = useMemo(() => {
-    return tenantStats.filter(
-      (t) =>
-        !t.status.toLowerCase().includes("active") ||
-        t.calls === 0 ||
-        t.openDeals === 0
-    ).length;
-  }, [tenantStats]);
+    return rows.sort((a, b) => b.calls - a.calls);
+  }, [analyticsFilteredTenants]);
 
   const analyticsDays = Number(analyticsWindow);
 
@@ -723,6 +686,7 @@ export default function ConfluxaAdminPage() {
     start.setHours(0, 0, 0, 0);
 
     const map = new Map<string, TrendPoint>();
+
     for (let i = 0; i < analyticsDays; i += 1) {
       const d = new Date(start);
       d.setDate(start.getDate() + i);
@@ -732,17 +696,22 @@ export default function ConfluxaAdminPage() {
         label: shortDayLabel(d),
         calls: 0,
         booked: 0,
+        recovered: 0,
       });
     }
 
     filteredCalls.forEach((call) => {
-      const d = new Date(call.created_at);
-      if (Number.isNaN(d.getTime()) || d < start) return;
+      const d = new Date(call.time);
+      if (Number.isNaN(d.getTime())) return;
+      if (d < start) return;
+
       const key = d.toISOString().slice(0, 10);
       const row = map.get(key);
       if (!row) return;
+
       row.calls += 1;
       if (isBookedOutcome(call.outcome)) row.booked += 1;
+      if (isRecoveredOutcome(call.outcome)) row.recovered += 1;
     });
 
     return Array.from(map.values());
@@ -753,71 +722,171 @@ export default function ConfluxaAdminPage() {
       (acc, row) => {
         acc.calls += row.calls;
         acc.booked += row.booked;
+        acc.recovered += row.recovered;
         return acc;
       },
-      { calls: 0, booked: 0 }
+      { calls: 0, booked: 0, recovered: 0 }
     );
   }, [analyticsTrend]);
 
-  const averageBookRate = filteredTenantStats.length
+  const topTenant = analyticsTenantRows[0];
+  const averageBookRate = analyticsTenantRows.length
     ? Math.round(
-        filteredTenantStats.reduce((acc, row) => acc + row.bookRate, 0) /
-          filteredTenantStats.length
+        analyticsTenantRows.reduce((acc, row) => acc + row.bookRate, 0) /
+          analyticsTenantRows.length
       )
     : 0;
 
-  const topTenant = filteredTenantStats[0];
+  function triggerAction(message: string, nextSection?: AdminSection) {
+    setActionMessage(message);
+    if (nextSection) setSection(nextSection);
+  }
 
-  const initials = useMemo(() => {
-    const name = profile?.full_name || profile?.email || "EE";
-    return name
-      .split(" ")
-      .map((s) => s[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase();
-  }, [profile]);
+  function resetNewTenantForm() {
+    setNewTenant({
+      business_name: "",
+      notification_email: "",
+      phone_number: "",
+      industry: "hvac",
+      delivery_mode: "email",
+    });
+  }
 
-  async function saveNewTenant() {
-    if (!newTenant.name.trim()) {
-      setActionMessage("Enter a tenant name first.");
-      return;
-    }
+  async function loadTenantDetail(tenantId: string) {
+    if (!tenantId) return;
+
+    setLoadingTenantDetail(true);
+    setActionMessage("");
 
     try {
-      const { error } = await supabase.from("tenants").insert({
-        tenant_key: newTenant.name
-          .trim()
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/^-+|-+$/g, ""),
-        name: newTenant.name.trim(),
-        display_name: newTenant.display_name.trim() || newTenant.name.trim(),
-        industry: newTenant.industry,
-        status: newTenant.status,
-        is_active: true,
+      const res = await apiFetch(`/api/admin/tenants/${tenantId}`, {
+        headers: getAdminHeaders(),
       });
+      const data = await res.json();
 
-      if (error) throw error;
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "Failed to load tenant details.");
+      }
 
-      setShowNewTenantModal(false);
-      setNewTenant({
-        name: "",
-        display_name: "",
-        industry: "general",
-        status: "active",
-      });
-      setActionMessage("Tenant created successfully.");
-      await loadData();
-      setSection("tenants");
+      setSelectedTenantId(tenantId);
+      setSelectedTenantDetail(data);
+      setShowTenantDetailModal(true);
     } catch (e: any) {
       console.error(e);
-      setActionMessage(e?.message || "Could not create tenant.");
+      setActionMessage(e.message || "Could not load tenant detail.");
+    } finally {
+      setLoadingTenantDetail(false);
     }
   }
 
-  function getTenantDashboardUrl(tenant: TenantStatRow) {
-    return `${APP_BASE}/dashboard?tenant_key=${encodeURIComponent(tenant.tenant_key)}`;
+  async function openCallTranscript(callId: string, tenantName?: string) {
+    if (!callId) return;
+
+    setShowTranscriptModal(true);
+    setLoadingTranscript(true);
+    setSelectedCallDetail(null);
+
+    try {
+      let tenantKey = "";
+
+      const matchedTenant = tenants.find(
+        (t) => t.name?.toLowerCase() === (tenantName || "").toLowerCase()
+      );
+      if (matchedTenant?.tenant_key) {
+        tenantKey = matchedTenant.tenant_key;
+      }
+
+      const url = tenantKey
+        ? `/api/calls/${callId}?tenant_key=${encodeURIComponent(tenantKey)}`
+        : `/api/calls/${callId}`;
+
+      const res = await apiFetch(url, {
+        headers: getAdminHeaders(),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.ok || !data.call) {
+        throw new Error(data.detail || data.error || "Failed to load call detail.");
+      }
+
+      setSelectedCallDetail(data.call);
+    } catch (e) {
+      console.error(e);
+      setSelectedCallDetail(null);
+      setActionMessage("Could not load transcript viewer.");
+    } finally {
+      setLoadingTranscript(false);
+    }
+  }
+
+  async function saveNewTenant() {
+    if (!newTenant.business_name.trim()) {
+      setActionMessage("Enter a business name first.");
+      return;
+    }
+
+    setSavingTenant(true);
+    setActionMessage("");
+    setError("");
+
+    try {
+      const payload = {
+        name: newTenant.business_name.trim(),
+        display_name: newTenant.business_name.trim(),
+        phone_number: newTenant.phone_number.trim() || undefined,
+        notification_email: newTenant.notification_email.trim() || undefined,
+        delivery_mode: newTenant.delivery_mode || "email",
+        country_code: "US",
+        label: "Main",
+        is_active: true,
+      };
+
+      const res = await apiFetch("/api/admin/tenants", {
+        method: "POST",
+        headers: {
+          ...getAdminHeaders(),
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "Failed to create tenant.");
+      }
+
+      setActionMessage(
+        `Tenant created successfully: ${
+          data.tenant?.display_name ||
+          data.tenant?.name ||
+          newTenant.business_name
+        }`
+      );
+
+      setShowNewTenantModal(false);
+      resetNewTenantForm();
+      await loadData();
+      setSection("tenants");
+
+      if (data.tenant?.id) {
+        await loadTenantDetail(data.tenant.id);
+      }
+    } catch (e: any) {
+      console.error(e);
+      setActionMessage(e.message || "Could not create tenant.");
+    } finally {
+      setSavingTenant(false);
+    }
+  }
+
+  function getTenantDashboardUrl(tenant: TenantRow) {
+    if (tenant.tenant_key) {
+      return `${APP_BASE}/dashboard?tenant_key=${encodeURIComponent(
+        tenant.tenant_key
+      )}`;
+    }
+    return `${APP_BASE}/dashboard`;
   }
 
   const navItems: {
@@ -828,40 +897,76 @@ export default function ConfluxaAdminPage() {
     { key: "overview", label: "Agency Overview", icon: LayoutDashboard },
     { key: "tenants", label: "Tenants", icon: Users },
     { key: "calls", label: "Calls", icon: Phone },
-    { key: "deals", label: "Deals", icon: Briefcase },
-    { key: "tasks", label: "Tasks", icon: ClipboardList },
+    { key: "leads", label: "Leads", icon: ClipboardList },
     { key: "system", label: "System", icon: Shield },
     { key: "settings", label: "Settings", icon: Settings },
   ];
+
+  const initials = useMemo(() => {
+    const name = authUser?.full_name || authUser?.email || "EE";
+    return name
+      .split(" ")
+      .map((s) => s[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase();
+  }, [authUser]);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-600">
+        Checking session...
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <ModalShell
         open={showNewTenantModal}
         title="Add new tenant"
-        description="Create a new Confluxa client workspace."
-        onClose={() => setShowNewTenantModal(false)}
+        description="Use this for onboarding new Confluxa clients."
+        onClose={() => {
+          if (!savingTenant) setShowNewTenantModal(false);
+        }}
       >
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-2 md:col-span-2">
-            <label className="text-sm font-medium">Tenant name</label>
+            <label className="text-sm font-medium">Business name</label>
             <Input
               className="rounded-2xl"
-              value={newTenant.name}
-              onChange={(e) => setNewTenant((p) => ({ ...p, name: e.target.value }))}
-              placeholder="Innovative Mechanical"
+              value={newTenant.business_name}
+              onChange={(e) =>
+                setNewTenant((p) => ({ ...p, business_name: e.target.value }))
+              }
+              placeholder="Innovative Mechanical, LLC"
             />
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium">Display name</label>
+            <label className="text-sm font-medium">Notification email</label>
             <Input
               className="rounded-2xl"
-              value={newTenant.display_name}
+              value={newTenant.notification_email}
               onChange={(e) =>
-                setNewTenant((p) => ({ ...p, display_name: e.target.value }))
+                setNewTenant((p) => ({
+                  ...p,
+                  notification_email: e.target.value,
+                }))
               }
-              placeholder="Innovative Mechanical"
+              placeholder="owner@business.com"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Phone number</label>
+            <Input
+              className="rounded-2xl"
+              value={newTenant.phone_number}
+              onChange={(e) =>
+                setNewTenant((p) => ({ ...p, phone_number: e.target.value }))
+              }
+              placeholder="+1 281 299 3921"
             />
           </div>
 
@@ -885,6 +990,26 @@ export default function ConfluxaAdminPage() {
               </SelectContent>
             </Select>
           </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Delivery mode</label>
+            <Select
+              value={newTenant.delivery_mode}
+              onValueChange={(value) =>
+                setNewTenant((p) => ({ ...p, delivery_mode: value }))
+              }
+            >
+              <SelectTrigger className="rounded-2xl">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="email">Email</SelectItem>
+                <SelectItem value="sms">SMS</SelectItem>
+                <SelectItem value="crm">CRM push</SelectItem>
+                <SelectItem value="webhook">Webhook</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         <div className="mt-6 flex justify-end gap-3">
@@ -892,16 +1017,208 @@ export default function ConfluxaAdminPage() {
             variant="outline"
             className="rounded-2xl"
             onClick={() => setShowNewTenantModal(false)}
+            disabled={savingTenant}
           >
             Cancel
           </Button>
           <Button
             className="rounded-2xl bg-slate-950 hover:bg-slate-800"
             onClick={saveNewTenant}
+            disabled={savingTenant}
           >
-            Save tenant
+            {savingTenant ? "Saving..." : "Save tenant"}
           </Button>
         </div>
+      </ModalShell>
+
+      <ModalShell
+        open={showTenantDetailModal}
+        title={
+          selectedTenantDetail?.tenant?.display_name ||
+          selectedTenantDetail?.tenant?.name ||
+          "Tenant detail"
+        }
+        description="Tenant profile, phone mapping, recipients, and current stats."
+        onClose={() => setShowTenantDetailModal(false)}
+      >
+        {loadingTenantDetail ? (
+          <div className="text-sm text-slate-500">Loading tenant detail...</div>
+        ) : !selectedTenantDetail?.ok ? (
+          <div className="text-sm text-red-600">
+            {selectedTenantDetail?.error || "Could not load tenant detail."}
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-3">
+              <Card className="rounded-2xl border-slate-200 shadow-none">
+                <CardContent className="p-4">
+                  <div className="text-sm text-slate-500">Calls</div>
+                  <div className="mt-2 text-2xl font-semibold text-slate-900">
+                    {selectedTenantDetail.stats?.calls ?? 0}
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="rounded-2xl border-slate-200 shadow-none">
+                <CardContent className="p-4">
+                  <div className="text-sm text-slate-500">Contacts</div>
+                  <div className="mt-2 text-2xl font-semibold text-slate-900">
+                    {selectedTenantDetail.stats?.contacts ?? 0}
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="rounded-2xl border-slate-200 shadow-none">
+                <CardContent className="p-4">
+                  <div className="text-sm text-slate-500">Integrations</div>
+                  <div className="mt-2 text-2xl font-semibold text-slate-900">
+                    {selectedTenantDetail.stats?.integrations ?? 0}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 p-4">
+              <div className="text-sm font-medium text-slate-900">
+                Tenant info
+              </div>
+              <div className="mt-3 grid gap-3 text-sm text-slate-600 md:grid-cols-2">
+                <div>
+                  <span className="font-medium text-slate-900">Tenant key:</span>{" "}
+                  {selectedTenantDetail.tenant?.tenant_key || "—"}
+                </div>
+                <div>
+                  <span className="font-medium text-slate-900">Status:</span>{" "}
+                  {selectedTenantDetail.tenant?.is_active ? "Active" : "Inactive"}
+                </div>
+                <div className="md:col-span-2">
+                  <span className="font-medium text-slate-900">Created:</span>{" "}
+                  {fmtTime(selectedTenantDetail.tenant?.created_at)}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 p-4">
+              <div className="text-sm font-medium text-slate-900">
+                Phone numbers
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {(selectedTenantDetail.phone_numbers || []).length === 0 ? (
+                  <div className="text-sm text-slate-500">
+                    No phone numbers assigned yet.
+                  </div>
+                ) : (
+                  selectedTenantDetail.phone_numbers?.map((phone) => (
+                    <div
+                      key={phone.id}
+                      className="rounded-2xl border border-slate-200 p-4"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <div className="font-medium text-slate-900">
+                            {phone.label || "Main"}
+                          </div>
+                          <div className="text-sm text-slate-500">
+                            {phone.phone_e164 || phone.phone_number || "—"}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          {phone.is_primary ? (
+                            <Badge className="border-emerald-200 bg-emerald-100 text-emerald-800">
+                              Primary
+                            </Badge>
+                          ) : null}
+                          <Badge
+                            className={statusTone(
+                              phone.is_active ? "active" : "inactive"
+                            )}
+                          >
+                            {phone.is_active ? "Active" : "Inactive"}
+                          </Badge>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid gap-2 text-sm text-slate-600 md:grid-cols-2">
+                        <div>
+                          <span className="font-medium text-slate-900">
+                            Country:
+                          </span>{" "}
+                          {phone.country_code || "—"}
+                        </div>
+                        <div>
+                          <span className="font-medium text-slate-900">
+                            Delivery:
+                          </span>{" "}
+                          {phone.delivery_mode || "email"}
+                        </div>
+                        <div className="md:col-span-2">
+                          <span className="font-medium text-slate-900">
+                            Notification email:
+                          </span>{" "}
+                          {phone.notification_email || "—"}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 p-4">
+              <div className="text-sm font-medium text-slate-900">
+                Notification recipients
+              </div>
+
+              <div className="mt-4 space-y-2">
+                {(selectedTenantDetail.notification_recipients || []).length ===
+                0 ? (
+                  <div className="text-sm text-slate-500">
+                    No notification recipients configured.
+                  </div>
+                ) : (
+                  selectedTenantDetail.notification_recipients?.map(
+                    (recipient) => (
+                      <div
+                        key={recipient.id}
+                        className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3"
+                      >
+                        <div>
+                          <div className="font-medium text-slate-900">
+                            {recipient.email}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {recipient.notification_type}
+                          </div>
+                        </div>
+                        <Badge
+                          className={statusTone(
+                            recipient.is_active ? "active" : "inactive"
+                          )}
+                        >
+                          {recipient.is_active ? "Active" : "Inactive"}
+                        </Badge>
+                      </div>
+                    )
+                  )
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap justify-end gap-3">
+              <a
+                href={`${APP_BASE}/dashboard?tenant_key=${encodeURIComponent(
+                  selectedTenantDetail.tenant?.tenant_key || ""
+                )}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <Button variant="outline" className="rounded-2xl">
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Open dashboard
+                </Button>
+              </a>
+            </div>
+          </div>
+        )}
       </ModalShell>
 
       <div className="grid min-h-screen lg:grid-cols-[280px_1fr]">
@@ -966,11 +1283,11 @@ export default function ConfluxaAdminPage() {
                 </div>
 
                 <Button
-                  onClick={refreshAll}
+                  onClick={loadData}
                   className="mt-5 w-full rounded-2xl bg-white text-slate-900 hover:bg-slate-100"
                 >
                   <RefreshCcw className="mr-2 h-4 w-4" />
-                  {refreshing ? "Refreshing..." : "Refresh data"}
+                  Refresh data
                 </Button>
               </CardContent>
             </Card>
@@ -995,23 +1312,46 @@ export default function ConfluxaAdminPage() {
                   </button>
 
                   <button
-                    onClick={() => setSection("system")}
+                    onClick={() =>
+                      triggerAction(
+                        "Open Twilio / phone mapping workflow next.",
+                        "system"
+                      )
+                    }
                     className="flex w-full items-center justify-between rounded-2xl border border-slate-200 px-3 py-3 text-left text-sm hover:bg-slate-50"
                   >
                     <span className="flex items-center gap-2">
-                      <Wrench className="h-4 w-4" />
-                      Open diagnostics
+                      <Link2 className="h-4 w-4" />
+                      Map numbers
                     </span>
                     <ChevronRight className="h-4 w-4 text-slate-400" />
                   </button>
 
                   <button
-                    onClick={() => setSection("tasks")}
+                    onClick={() =>
+                      triggerAction("Reviewing failed deliveries section.", "system")
+                    }
                     className="flex w-full items-center justify-between rounded-2xl border border-slate-200 px-3 py-3 text-left text-sm hover:bg-slate-50"
                   >
                     <span className="flex items-center gap-2">
-                      <LifeBuoy className="h-4 w-4" />
-                      Review tasks
+                      <FileWarning className="h-4 w-4" />
+                      Review failures
+                    </span>
+                    <ChevronRight className="h-4 w-4 text-slate-400" />
+                  </button>
+
+                  <button
+                    onClick={() =>
+                      triggerAction(
+                        "Opening settings area for diagnostics and config.",
+                        "settings"
+                      )
+                    }
+                    className="flex w-full items-center justify-between rounded-2xl border border-slate-200 px-3 py-3 text-left text-sm hover:bg-slate-50"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Wrench className="h-4 w-4" />
+                      Open diagnostics
                     </span>
                     <ChevronRight className="h-4 w-4 text-slate-400" />
                   </button>
@@ -1032,7 +1372,8 @@ export default function ConfluxaAdminPage() {
                   Confluxa Agency OS
                 </h1>
                 <p className="mt-1 text-sm text-slate-500">
-                  Cross-tenant operations, delivery, and revenue visibility.
+                  Run onboarding, delivery, tenant management, and growth from one
+                  console.
                 </p>
               </div>
 
@@ -1042,7 +1383,7 @@ export default function ConfluxaAdminPage() {
                   <Input
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search tenants, calls, deals, tasks"
+                    placeholder="Search callers, tenants, leads"
                     className="rounded-2xl border-slate-200 pl-9"
                   />
                 </div>
@@ -1053,8 +1394,8 @@ export default function ConfluxaAdminPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All tenants</SelectItem>
-                    {tenantStats.map((tenant) => (
-                      <SelectItem key={tenant.id} value={tenant.id}>
+                    {tenants.map((tenant) => (
+                      <SelectItem key={tenant.id} value={tenant.name}>
                         {tenant.name}
                       </SelectItem>
                     ))}
@@ -1073,6 +1414,11 @@ export default function ConfluxaAdminPage() {
                   variant="outline"
                   size="icon"
                   className="rounded-2xl border-slate-200"
+                  onClick={() =>
+                    triggerAction(
+                      "Notifications panel placeholder. Wire this later."
+                    )
+                  }
                 >
                   <Bell className="h-4 w-4" />
                 </Button>
@@ -1098,6 +1444,15 @@ export default function ConfluxaAdminPage() {
           </header>
 
           <div className="space-y-8 px-6 py-6">
+            {authUser ? (
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                <div>Email: {authUser.email || "—"}</div>
+                <div>Role: {authUser.global_role || "member"}</div>
+                <div>Admin secret present: {ADMIN_SECRET ? "Yes" : "No"}</div>
+                <div>Accessible tenant memberships: {authTenants.length}</div>
+              </div>
+            ) : null}
+
             {error ? (
               <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                 {error}
@@ -1116,7 +1471,7 @@ export default function ConfluxaAdminPage() {
               </div>
             ) : null}
 
-            {section === "overview" && !loading && (
+            {section === "overview" && (
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -1125,54 +1480,58 @@ export default function ConfluxaAdminPage() {
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                   <MetricCard
                     title="Monthly recurring revenue"
-                    value={fmtCurrency(monthlyAgencyMrr)}
-                    note={`${summary.activeTenants} active paying tenants`}
+                    value={`$${monthlyAgencyMrr.toLocaleString()}`}
+                    note={`${
+                      tenants.filter((t) =>
+                        t.status.toLowerCase().includes("active")
+                      ).length
+                    } active paying tenants`}
                     icon={DollarSign}
                   />
                   <MetricCard
                     title="Setup fees this month"
-                    value={fmtCurrency(setupFeesThisMonth)}
-                    note="Simple internal estimate"
-                    icon={TrendingUp}
+                    value={`$${setupFeesThisMonth.toLocaleString()}`}
+                    note="Demo estimate until billing module is live"
+                    icon={ArrowUpRight}
                   />
                   <MetricCard
                     title="Tenants needing attention"
                     value={tenantsNeedingAttention}
-                    note="Low activity or inactive workspace"
+                    note="Based on system alerts and failures"
                     icon={AlertTriangle}
                   />
                   <MetricCard
-                    title="Calls today"
-                    value={summary.callsToday}
-                    note="Across all tenant workspaces"
+                    title="Calls across tenants today"
+                    value={summary.calls_today}
+                    note={summary.calls_today_note}
                     icon={Phone}
                   />
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                   <MetricCard
-                    title="Booked outcomes"
-                    value={summary.bookedMeetings}
-                    note="Booked calls across platform"
+                    title="Booked meetings"
+                    value={summary.booked_meetings}
+                    note={summary.booked_meetings_note}
                     icon={ClipboardList}
                   />
                   <MetricCard
                     title="Recovered opportunities"
-                    value={summary.missedRecovered}
-                    note="Qualified or saved conversations"
+                    value={summary.missed_calls_recovered}
+                    note={summary.missed_calls_recovered_note}
                     icon={CheckCircle2}
                   />
                   <MetricCard
                     title="Active tenant accounts"
-                    value={summary.activeTenants}
-                    note="Live client workspaces"
+                    value={summary.active_clients}
+                    note={summary.active_clients_note}
                     icon={Users}
                   />
                   <MetricCard
-                    title="Open deals"
-                    value={deals.filter((d) => d.status === "open").length}
-                    note="All active opportunities"
-                    icon={Briefcase}
+                    title="Email retries"
+                    value={health?.email_retries ?? 0}
+                    note="Platform delivery retry count"
+                    icon={Mail}
                   />
                 </div>
 
@@ -1180,7 +1539,7 @@ export default function ConfluxaAdminPage() {
                   <CardHeader>
                     <SectionHeader
                       title="Tenant analytics layer"
-                      description="Cross-tenant performance trends and booking efficiency."
+                      description="Cross-tenant performance trends, booking efficiency, and recovery quality."
                       action={
                         <div className="flex items-center gap-2">
                           <Select
@@ -1216,15 +1575,26 @@ export default function ConfluxaAdminPage() {
                         value={analyticsTotals.booked}
                         note={`${
                           analyticsTotals.calls
-                            ? Math.round((analyticsTotals.booked / analyticsTotals.calls) * 100)
+                            ? Math.round(
+                                (analyticsTotals.booked / analyticsTotals.calls) *
+                                  100
+                              )
                             : 0
                         }% booking rate`}
                         icon={ClipboardList}
                       />
                       <MetricCard
-                        title="Average book rate"
-                        value={`${averageBookRate}%`}
-                        note="Across visible tenants"
+                        title="Analytics recovered"
+                        value={analyticsTotals.recovered}
+                        note={`${
+                          analyticsTotals.calls
+                            ? Math.round(
+                                (analyticsTotals.recovered /
+                                  analyticsTotals.calls) *
+                                  100
+                              )
+                            : 0
+                        }% recovery rate`}
                         icon={TrendingUp}
                       />
                       <MetricCard
@@ -1244,7 +1614,7 @@ export default function ConfluxaAdminPage() {
                         <CardHeader>
                           <CardTitle>Call volume trend</CardTitle>
                           <CardDescription>
-                            Calls and booked calls over the selected window.
+                            Calls, booked calls, and recovered calls over the selected window.
                           </CardDescription>
                         </CardHeader>
                         <CardContent>
@@ -1255,8 +1625,24 @@ export default function ConfluxaAdminPage() {
                                 <XAxis dataKey="label" />
                                 <YAxis />
                                 <Tooltip />
-                                <Line type="monotone" dataKey="calls" strokeWidth={3} dot={false} />
-                                <Line type="monotone" dataKey="booked" strokeWidth={3} dot={false} />
+                                <Line
+                                  type="monotone"
+                                  dataKey="calls"
+                                  strokeWidth={3}
+                                  dot={false}
+                                />
+                                <Line
+                                  type="monotone"
+                                  dataKey="booked"
+                                  strokeWidth={3}
+                                  dot={false}
+                                />
+                                <Line
+                                  type="monotone"
+                                  dataKey="recovered"
+                                  strokeWidth={3}
+                                  dot={false}
+                                />
                               </LineChart>
                             </ResponsiveContainer>
                           </div>
@@ -1267,13 +1653,13 @@ export default function ConfluxaAdminPage() {
                         <CardHeader>
                           <CardTitle>Tenant performance</CardTitle>
                           <CardDescription>
-                            Booking comparison across visible tenants.
+                            Booking and recovery comparison across the visible tenant set.
                           </CardDescription>
                         </CardHeader>
                         <CardContent>
                           <div className="h-[320px]">
                             <ResponsiveContainer width="100%" height="100%">
-                              <BarChart data={filteredTenantStats.slice(0, 8)}>
+                              <BarChart data={analyticsTenantRows.slice(0, 8)}>
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                                 <XAxis dataKey="name" hide />
                                 <YAxis />
@@ -1287,56 +1673,397 @@ export default function ConfluxaAdminPage() {
                       </Card>
                     </div>
 
-                    <Card className="rounded-3xl border-slate-200 shadow-none">
+                    <div className="grid gap-6 xl:grid-cols-[1.3fr_1fr]">
+                      <Card className="rounded-3xl border-slate-200 shadow-none">
+                        <CardHeader>
+                          <CardTitle>Tenant leaderboard</CardTitle>
+                          <CardDescription>
+                            Operational performance by tenant.
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent className="p-0">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Tenant</TableHead>
+                                <TableHead>Status</TableHead>
+                                <TableHead>Calls</TableHead>
+                                <TableHead>Booked</TableHead>
+                                <TableHead>Recovered</TableHead>
+                                <TableHead>Book rate</TableHead>
+                                <TableHead>Recovery rate</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {analyticsTenantRows.map((row) => (
+                                <TableRow key={row.id}>
+                                  <TableCell className="font-medium">
+                                    {row.name}
+                                  </TableCell>
+                                  <TableCell>
+                                    <Badge className={statusTone(row.status)}>
+                                      {row.status}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell>{row.calls}</TableCell>
+                                  <TableCell>{row.booked}</TableCell>
+                                  <TableCell>{row.recovered}</TableCell>
+                                  <TableCell>{row.bookRate}%</TableCell>
+                                  <TableCell>{row.recoveryRate}%</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </CardContent>
+                      </Card>
+
+                      <Card className="rounded-3xl border-slate-200 shadow-none">
+                        <CardHeader>
+                          <CardTitle>Analytics summary</CardTitle>
+                          <CardDescription>
+                            Quick operator insights from the selected tenant view.
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          <div className="rounded-2xl bg-slate-100 p-4">
+                            <div className="text-sm text-slate-500">
+                              Average booking rate
+                            </div>
+                            <div className="mt-2 text-3xl font-semibold text-slate-950">
+                              {averageBookRate}%
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 p-4">
+                            <div className="text-sm text-slate-500">
+                              Visible tenants
+                            </div>
+                            <div className="mt-2 text-2xl font-semibold text-slate-950">
+                              {analyticsTenantRows.length}
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 p-4">
+                            <div className="text-sm text-slate-500">
+                              Search-filtered calls
+                            </div>
+                            <div className="mt-2 text-2xl font-semibold text-slate-950">
+                              {filteredCalls.length}
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 p-4">
+                            <div className="text-sm text-slate-500">
+                              Search-filtered leads
+                            </div>
+                            <div className="mt-2 text-2xl font-semibold text-slate-950">
+                              {filteredLeads.length}
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <div className="grid gap-6 xl:grid-cols-[1.35fr_1fr]">
+                  <Card className="rounded-3xl border-slate-200 shadow-sm">
+                    <CardHeader>
+                      <CardTitle>Agency command center</CardTitle>
+                      <CardDescription>
+                        The operator view for sales, onboarding, support, and retention.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="grid gap-4 md:grid-cols-2">
+                      <button
+                        onClick={() => setSection("tenants")}
+                        className="rounded-2xl border border-slate-200 p-4 text-left hover:bg-slate-50"
+                      >
+                        <div className="flex items-center gap-2 font-medium">
+                          <Users className="h-4 w-4" />
+                          Tenant operations
+                        </div>
+                        <p className="mt-2 text-sm text-slate-500">
+                          View all tenants, their status, phone lines, and performance.
+                        </p>
+                      </button>
+
+                      <button
+                        onClick={() => setSection("system")}
+                        className="rounded-2xl border border-slate-200 p-4 text-left hover:bg-slate-50"
+                      >
+                        <div className="flex items-center gap-2 font-medium">
+                          <Shield className="h-4 w-4" />
+                          Delivery + reliability
+                        </div>
+                        <p className="mt-2 text-sm text-slate-500">
+                          Monitor webhook health, retries, summary delivery, and issues.
+                        </p>
+                      </button>
+
+                      <button
+                        onClick={() => setSection("calls")}
+                        className="rounded-2xl border border-slate-200 p-4 text-left hover:bg-slate-50"
+                      >
+                        <div className="flex items-center gap-2 font-medium">
+                          <Phone className="h-4 w-4" />
+                          Call review
+                        </div>
+                        <p className="mt-2 text-sm text-slate-500">
+                          Search inbound activity across all tenants from one place.
+                        </p>
+                      </button>
+
+                      <button
+                        onClick={() => setSection("leads")}
+                        className="rounded-2xl border border-slate-200 p-4 text-left hover:bg-slate-50"
+                      >
+                        <div className="flex items-center gap-2 font-medium">
+                          <Activity className="h-4 w-4" />
+                          Pipeline visibility
+                        </div>
+                        <p className="mt-2 text-sm text-slate-500">
+                          Track qualified leads, follow-ups, and proof for upsells.
+                        </p>
+                      </button>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="rounded-3xl border-slate-200 shadow-sm">
+                    <CardHeader>
+                      <CardTitle>System attention</CardTitle>
+                      <CardDescription>
+                        What needs review before it affects delivery.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {(health?.failures || []).map((item) => (
+                        <div
+                          key={item.label}
+                          className="flex items-center justify-between rounded-2xl border border-slate-200 p-4"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="rounded-xl bg-slate-100 p-2">
+                              <AlertTriangle className="h-4 w-4" />
+                            </div>
+                            <div>
+                              <div className="font-medium">{item.label}</div>
+                              <div className="text-sm text-slate-500">
+                                Last 24 hours
+                              </div>
+                            </div>
+                          </div>
+                          <Badge className={item.tone}>{item.value}</Badge>
+                        </div>
+                      ))}
+
+                      {health?.onboarding_progress ? (
+                        <div className="rounded-2xl bg-slate-100 p-4">
+                          <div className="flex items-center justify-between gap-4">
+                            <div>
+                              <div className="font-medium">
+                                {health.onboarding_progress.label}
+                              </div>
+                              <div className="text-sm text-slate-500">
+                                {health.onboarding_progress.description}
+                              </div>
+                            </div>
+                            <Users className="h-5 w-5 text-slate-500" />
+                          </div>
+                          <Progress
+                            value={health.onboarding_progress.percent}
+                            className="mt-4"
+                          />
+                        </div>
+                      ) : null}
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <Tabs defaultValue="calls" className="space-y-6">
+                  <TabsList className="rounded-2xl bg-slate-100">
+                    <TabsTrigger value="calls">Calls</TabsTrigger>
+                    <TabsTrigger value="leads">Leads</TabsTrigger>
+                    <TabsTrigger value="tenants">Tenants</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="calls">
+                    <Card className="rounded-3xl border-slate-200 shadow-sm">
                       <CardHeader>
-                        <CardTitle>Tenant leaderboard</CardTitle>
+                        <CardTitle>All tenant call activity</CardTitle>
                         <CardDescription>
-                          Operational performance by tenant.
+                          Every inbound conversation across all tenants.
                         </CardDescription>
                       </CardHeader>
-                      <CardContent className="p-0">
+                      <CardContent>
                         <Table>
                           <TableHeader>
                             <TableRow>
+                              <TableHead>Caller</TableHead>
                               <TableHead>Tenant</TableHead>
-                              <TableHead>Status</TableHead>
-                              <TableHead>Calls</TableHead>
-                              <TableHead>Contacts</TableHead>
-                              <TableHead>Open deals</TableHead>
-                              <TableHead>Tasks due</TableHead>
-                              <TableHead>Book rate</TableHead>
-                              <TableHead>Pipeline</TableHead>
+                              <TableHead>Time</TableHead>
+                              <TableHead>Outcome</TableHead>
+                              <TableHead>Summary</TableHead>
+                              <TableHead>Action</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {filteredTenantStats.map((row) => (
+                            {filteredCalls.map((row) => (
                               <TableRow key={row.id}>
-                                <TableCell className="font-medium">{row.name}</TableCell>
                                 <TableCell>
-                                  <Badge className={statusTone(row.status)}>{row.status}</Badge>
+                                  <div className="font-medium">
+                                    {row.caller_name || "Unknown Caller"}
+                                  </div>
+                                  <div className="text-xs text-slate-500">
+                                    {row.caller_phone || "—"}
+                                  </div>
                                 </TableCell>
-                                <TableCell>{row.calls}</TableCell>
-                                <TableCell>{row.contacts}</TableCell>
-                                <TableCell>{row.openDeals}</TableCell>
-                                <TableCell>{row.tasksDue}</TableCell>
-                                <TableCell>{row.bookRate}%</TableCell>
-                                <TableCell>{fmtCurrency(row.pipelineValue)}</TableCell>
+                                <TableCell>{row.tenant_name}</TableCell>
+                                <TableCell>{fmtTime(row.time)}</TableCell>
+                                <TableCell>
+                                  <Badge className={statusTone(row.outcome)}>
+                                    {row.outcome}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="max-w-[320px] truncate">
+                                  {row.summary || "No summary yet"}
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="rounded-2xl"
+                                    onClick={() =>
+                                      openCallTranscript(row.id, row.tenant_name)
+                                    }
+                                  >
+                                    <Eye className="mr-2 h-4 w-4" />
+                                    Open
+                                  </Button>
+                                </TableCell>
                               </TableRow>
                             ))}
                           </TableBody>
                         </Table>
                       </CardContent>
                     </Card>
-                  </CardContent>
-                </Card>
+                  </TabsContent>
+
+                  <TabsContent value="leads">
+                    <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                      {filteredLeads.map((lead) => (
+                        <Card
+                          key={lead.id}
+                          className="rounded-3xl border-slate-200 shadow-sm"
+                        >
+                          <CardContent className="p-5">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="font-medium">{lead.name}</div>
+                                <div className="text-sm text-slate-500">
+                                  {lead.business}
+                                </div>
+                              </div>
+                              <Badge className={statusTone(lead.status)}>
+                                {lead.status}
+                              </Badge>
+                            </div>
+                            <div className="mt-4 text-sm text-slate-600">
+                              {lead.issue}
+                            </div>
+                            <div className="mt-4 flex items-center justify-between text-xs text-slate-500">
+                              <span>{lead.niche}</span>
+                              <span>{lead.next_action}</span>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="tenants">
+                    <Card className="rounded-3xl border-slate-200 shadow-sm">
+                      <CardHeader>
+                        <CardTitle>Tenant accounts</CardTitle>
+                        <CardDescription>
+                          Use this for pricing, support, onboarding, and reviews.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Name</TableHead>
+                              <TableHead>Phone</TableHead>
+                              <TableHead>Status</TableHead>
+                              <TableHead>Calls</TableHead>
+                              <TableHead>Booked</TableHead>
+                              <TableHead>Recovered</TableHead>
+                              <TableHead>Actions</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {filteredTenants.map((tenant) => (
+                              <TableRow key={tenant.id}>
+                                <TableCell className="font-medium">
+                                  {tenant.name}
+                                </TableCell>
+                                <TableCell>{tenant.phone_number}</TableCell>
+                                <TableCell>
+                                  <Badge className={statusTone(tenant.status)}>
+                                    {tenant.status}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>{tenant.calls}</TableCell>
+                                <TableCell>{tenant.booked}</TableCell>
+                                <TableCell>{tenant.recovered}</TableCell>
+                                <TableCell>
+                                  <div className="flex gap-2">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="rounded-2xl"
+                                      onClick={() => loadTenantDetail(tenant.id)}
+                                    >
+                                      <Eye className="mr-2 h-4 w-4" />
+                                      View
+                                    </Button>
+                                    <a
+                                      href={getTenantDashboardUrl(tenant)}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="rounded-2xl"
+                                      >
+                                        <ExternalLink className="mr-2 h-4 w-4" />
+                                        Dashboard
+                                      </Button>
+                                    </a>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </CardContent>
+                    </Card>
+                  </TabsContent>
+                </Tabs>
               </motion.div>
             )}
 
-            {section === "tenants" && !loading && (
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+            {section === "tenants" && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-6"
+              >
                 <SectionHeader
                   title="Tenant management"
-                  description="Manage all client accounts and workspace performance."
+                  description="Manage all client accounts, status, numbers, and performance."
                   action={
                     <Button
                       className="rounded-2xl bg-slate-950 hover:bg-slate-800"
@@ -1354,38 +2081,55 @@ export default function ConfluxaAdminPage() {
                       <TableHeader>
                         <TableRow>
                           <TableHead>Name</TableHead>
-                          <TableHead>Industry</TableHead>
+                          <TableHead>Phone</TableHead>
                           <TableHead>Status</TableHead>
                           <TableHead>Calls</TableHead>
                           <TableHead>Booked</TableHead>
                           <TableHead>Recovered</TableHead>
-                          <TableHead>Pipeline</TableHead>
                           <TableHead>Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {filteredTenantStats.map((tenant) => (
+                        {filteredTenants.map((tenant) => (
                           <TableRow key={tenant.id}>
-                            <TableCell className="font-medium">{tenant.name}</TableCell>
-                            <TableCell>{tenant.industry}</TableCell>
+                            <TableCell className="font-medium">
+                              {tenant.name}
+                            </TableCell>
+                            <TableCell>{tenant.phone_number}</TableCell>
                             <TableCell>
-                              <Badge className={statusTone(tenant.status)}>{tenant.status}</Badge>
+                              <Badge className={statusTone(tenant.status)}>
+                                {tenant.status}
+                              </Badge>
                             </TableCell>
                             <TableCell>{tenant.calls}</TableCell>
                             <TableCell>{tenant.booked}</TableCell>
                             <TableCell>{tenant.recovered}</TableCell>
-                            <TableCell>{fmtCurrency(tenant.pipelineValue)}</TableCell>
                             <TableCell>
-                              <a
-                                href={getTenantDashboardUrl(tenant)}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                <Button variant="outline" size="sm" className="rounded-2xl">
-                                  <ExternalLink className="mr-2 h-4 w-4" />
-                                  Dashboard
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="rounded-2xl"
+                                  onClick={() => loadTenantDetail(tenant.id)}
+                                >
+                                  <Eye className="mr-2 h-4 w-4" />
+                                  View
                                 </Button>
-                              </a>
+                                <a
+                                  href={getTenantDashboardUrl(tenant)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="rounded-2xl"
+                                  >
+                                    <ExternalLink className="mr-2 h-4 w-4" />
+                                    Dashboard
+                                  </Button>
+                                </a>
+                              </div>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -1396,11 +2140,40 @@ export default function ConfluxaAdminPage() {
               </motion.div>
             )}
 
-            {section === "calls" && !loading && (
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+            {section === "calls" && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-6"
+              >
                 <SectionHeader
                   title="Call operations"
-                  description="Review inbound and outbound call activity across the platform."
+                  description="Search and review all inbound call activity across the platform."
+                  action={
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        className="rounded-2xl"
+                        onClick={() =>
+                          triggerAction(
+                            "Filter drawer placeholder. Add advanced filters next."
+                          )
+                        }
+                      >
+                        Filter
+                      </Button>
+                      <Button
+                        className="rounded-2xl bg-slate-950 hover:bg-slate-800"
+                        onClick={() =>
+                          triggerAction(
+                            "Export placeholder. Next step: CSV download."
+                          )
+                        }
+                      >
+                        Export
+                      </Button>
+                    </div>
+                  }
                 />
 
                 <Card className="rounded-3xl border-slate-200 shadow-sm">
@@ -1408,35 +2181,50 @@ export default function ConfluxaAdminPage() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Tenant</TableHead>
                           <TableHead>Caller</TableHead>
+                          <TableHead>Tenant</TableHead>
                           <TableHead>Time</TableHead>
                           <TableHead>Outcome</TableHead>
                           <TableHead>Summary</TableHead>
+                          <TableHead>Action</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {filteredCalls.map((call) => {
-                          const tenant = tenantStats.find((t) => t.id === call.tenant_id);
-                          return (
-                            <TableRow key={call.id}>
-                              <TableCell>{tenant?.name || "Unknown tenant"}</TableCell>
-                              <TableCell>
-                                <div className="font-medium">{call.caller_phone || "Unknown caller"}</div>
-                                <div className="text-xs text-slate-500">{call.caller_email || "—"}</div>
-                              </TableCell>
-                              <TableCell>{fmtDateTime(call.created_at)}</TableCell>
-                              <TableCell>
-                                <Badge className={statusTone(call.outcome || call.qualification_status || "")}>
-                                  {call.outcome || call.qualification_status || "New"}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="max-w-[360px] truncate">
-                                {call.summary || "No summary yet"}
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
+                        {filteredCalls.map((row) => (
+                          <TableRow key={row.id}>
+                            <TableCell>
+                              <div className="font-medium">
+                                {row.caller_name || "Unknown Caller"}
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                {row.caller_phone || "—"}
+                              </div>
+                            </TableCell>
+                            <TableCell>{row.tenant_name}</TableCell>
+                            <TableCell>{fmtTime(row.time)}</TableCell>
+                            <TableCell>
+                              <Badge className={statusTone(row.outcome)}>
+                                {row.outcome}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="max-w-[320px] truncate">
+                              {row.summary || "No summary yet"}
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="rounded-2xl"
+                                onClick={() =>
+                                  openCallTranscript(row.id, row.tenant_name)
+                                }
+                              >
+                                <Eye className="mr-2 h-4 w-4" />
+                                Open
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
                       </TableBody>
                     </Table>
                   </CardContent>
@@ -1444,108 +2232,58 @@ export default function ConfluxaAdminPage() {
               </motion.div>
             )}
 
-            {section === "deals" && !loading && (
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+            {section === "leads" && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-6"
+              >
                 <SectionHeader
-                  title="Deals"
-                  description="Cross-tenant opportunity visibility."
+                  title="Lead pipeline"
+                  description="All captured leads and their next action across tenants."
                 />
 
-                <Card className="rounded-3xl border-slate-200 shadow-sm">
-                  <CardContent className="p-0">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Tenant</TableHead>
-                          <TableHead>Title</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Source</TableHead>
-                          <TableHead>Value</TableHead>
-                          <TableHead>Probability</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {filteredDeals.map((deal) => {
-                          const tenant = tenantStats.find((t) => t.id === deal.tenant_id);
-                          const stage = pipelineStages.find((s) => s.id === deal.stage_id);
-                          return (
-                            <TableRow key={deal.id}>
-                              <TableCell>{tenant?.name || "Unknown tenant"}</TableCell>
-                              <TableCell>
-                                <div className="font-medium">{deal.title}</div>
-                                <div className="text-xs text-slate-500">
-                                  {stage?.name || stage?.stage_key || "No stage"}
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <Badge className={statusTone(deal.status)}>{deal.status}</Badge>
-                              </TableCell>
-                              <TableCell>{deal.source || "—"}</TableCell>
-                              <TableCell>{fmtCurrency(deal.estimated_value)}</TableCell>
-                              <TableCell>{deal.probability ?? 0}%</TableCell>
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </CardContent>
-                </Card>
+                <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                  {filteredLeads.map((lead) => (
+                    <Card
+                      key={lead.id}
+                      className="rounded-3xl border-slate-200 shadow-sm"
+                    >
+                      <CardContent className="p-5">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="font-medium">{lead.name}</div>
+                            <div className="text-sm text-slate-500">
+                              {lead.business}
+                            </div>
+                          </div>
+                          <Badge className={statusTone(lead.status)}>
+                            {lead.status}
+                          </Badge>
+                        </div>
+                        <div className="mt-4 text-sm text-slate-600">
+                          {lead.issue}
+                        </div>
+                        <div className="mt-4 flex items-center justify-between text-xs text-slate-500">
+                          <span>{lead.niche}</span>
+                          <span>{lead.next_action}</span>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
               </motion.div>
             )}
 
-            {section === "tasks" && !loading && (
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-                <SectionHeader
-                  title="Tasks"
-                  description="Follow-up and operational tasks across all tenants."
-                />
-
-                <Card className="rounded-3xl border-slate-200 shadow-sm">
-                  <CardContent className="p-0">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Tenant</TableHead>
-                          <TableHead>Title</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Priority</TableHead>
-                          <TableHead>Due</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {filteredTasks.map((task) => {
-                          const tenant = tenantStats.find((t) => t.id === task.tenant_id);
-                          return (
-                            <TableRow key={task.id}>
-                              <TableCell>{tenant?.name || "Unknown tenant"}</TableCell>
-                              <TableCell>
-                                <div className="font-medium">{task.title}</div>
-                                <div className="text-xs text-slate-500 truncate max-w-[300px]">
-                                  {task.description || "—"}
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <Badge className={statusTone(task.status)}>{task.status}</Badge>
-                              </TableCell>
-                              <TableCell>
-                                <Badge variant="outline">{task.priority}</Badge>
-                              </TableCell>
-                              <TableCell>{fmtDateTime(task.due_at)}</TableCell>
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            )}
-
-            {section === "system" && !loading && (
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+            {section === "system" && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-6"
+              >
                 <SectionHeader
                   title="System + delivery"
-                  description="Backend reliability and operational checks."
+                  description="Monitor platform reliability, mapping, notifications, and backend health."
                 />
 
                 <div className="grid gap-6 xl:grid-cols-[1.2fr_1fr]">
@@ -1553,59 +2291,44 @@ export default function ConfluxaAdminPage() {
                     <CardHeader>
                       <CardTitle>Platform health detail</CardTitle>
                       <CardDescription>
-                        Live backend status from the privileged system health endpoint.
+                        Internal checks for backend delivery quality.
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="flex items-center justify-between rounded-2xl border border-slate-200 p-4">
                         <div>
                           <div className="font-medium">Voice routing</div>
-                          <div className="text-sm text-slate-500">Phone and assistant flow</div>
+                          <div className="text-sm text-slate-500">
+                            Phone and assistant flow
+                          </div>
                         </div>
-                        <Badge className={statusTone(health?.voice_routing)}>{health?.voice_routing || "—"}</Badge>
+                        <Badge className={statusTone(health?.voice_routing)}>
+                          {health?.voice_routing || "—"}
+                        </Badge>
                       </div>
 
                       <div className="flex items-center justify-between rounded-2xl border border-slate-200 p-4">
                         <div>
                           <div className="font-medium">Webhook health</div>
-                          <div className="text-sm text-slate-500">Inbound event processing</div>
+                          <div className="text-sm text-slate-500">
+                            Inbound event processing
+                          </div>
                         </div>
-                        <Badge className={statusTone(health?.webhook_health)}>{health?.webhook_health || "—"}</Badge>
+                        <Badge className={statusTone(health?.webhook_health)}>
+                          {health?.webhook_health || "—"}
+                        </Badge>
                       </div>
 
                       <div className="flex items-center justify-between rounded-2xl border border-slate-200 p-4">
                         <div>
                           <div className="font-medium">Email delivery</div>
-                          <div className="text-sm text-slate-500">Summary delivery status</div>
-                        </div>
-                        <Badge className={statusTone(health?.email_delivery)}>{health?.email_delivery || "—"}</Badge>
-                      </div>
-
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <div className="rounded-2xl bg-slate-100 p-4">
-                          <div className="text-sm text-slate-500">Tenants total</div>
-                          <div className="mt-2 text-2xl font-semibold text-slate-950">
-                            {health?.stats?.tenants_total ?? tenantStats.length}
+                          <div className="text-sm text-slate-500">
+                            Summary delivery status
                           </div>
                         </div>
-                        <div className="rounded-2xl bg-slate-100 p-4">
-                          <div className="text-sm text-slate-500">Calls last 24h</div>
-                          <div className="mt-2 text-2xl font-semibold text-slate-950">
-                            {health?.stats?.calls_last_24h ?? 0}
-                          </div>
-                        </div>
-                        <div className="rounded-2xl bg-slate-100 p-4">
-                          <div className="text-sm text-slate-500">Open tasks</div>
-                          <div className="mt-2 text-2xl font-semibold text-slate-950">
-                            {health?.stats?.open_tasks ?? 0}
-                          </div>
-                        </div>
-                        <div className="rounded-2xl bg-slate-100 p-4">
-                          <div className="text-sm text-slate-500">Open deals</div>
-                          <div className="mt-2 text-2xl font-semibold text-slate-950">
-                            {health?.stats?.open_deals ?? 0}
-                          </div>
-                        </div>
+                        <Badge className={statusTone(health?.email_delivery)}>
+                          {health?.email_delivery || "—"}
+                        </Badge>
                       </div>
                     </CardContent>
                   </Card>
@@ -1614,20 +2337,24 @@ export default function ConfluxaAdminPage() {
                     <CardHeader>
                       <CardTitle>Operator actions</CardTitle>
                       <CardDescription>
-                        Internal shortcuts for platform management.
+                        Fast shortcuts for internal management.
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3">
                       {[
                         ["Review webhook logs", Activity],
-                        ["Review delivery health", Mail],
-                        ["Check backend version", Server],
-                        ["Run diagnostics", Wrench],
+                        ["Map Twilio numbers", Link2],
+                        ["Review failed deliveries", FileWarning],
                         ["Support queue", LifeBuoy],
+                        ["Run diagnostics", Wrench],
                       ].map(([label, Icon]: any) => (
                         <button
                           key={label}
-                          onClick={() => setActionMessage(`${label} clicked.`)}
+                          onClick={() =>
+                            triggerAction(
+                              `${label} clicked. Wire endpoint or route next.`
+                            )
+                          }
                           className="flex w-full items-center justify-between rounded-2xl border border-slate-200 p-4 text-left hover:bg-slate-50"
                         >
                           <div className="flex items-center gap-3">
@@ -1645,11 +2372,15 @@ export default function ConfluxaAdminPage() {
               </motion.div>
             )}
 
-            {section === "settings" && !loading && (
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+            {section === "settings" && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-6"
+              >
                 <SectionHeader
                   title="Agency settings"
-                  description="Environment, app routing, and operator guidance."
+                  description="Internal configuration and next-step wiring points."
                 />
 
                 <div className="grid gap-6 xl:grid-cols-2">
@@ -1676,9 +2407,11 @@ export default function ConfluxaAdminPage() {
                       </div>
 
                       <div className="rounded-2xl border border-slate-200 p-4">
-                        <div className="text-sm font-medium">Admin profile</div>
-                        <div className="mt-1 text-sm text-slate-500">
-                          {profile?.full_name || "No full name"} • {profile?.email || "—"}
+                        <div className="text-sm font-medium">Current session</div>
+                        <div className="mt-2 space-y-1 text-sm text-slate-500">
+                          <div>User: {authUser?.email || "—"}</div>
+                          <div>Role: {authUser?.global_role || "member"}</div>
+                          <div>Tenant memberships: {authTenants.length}</div>
                         </div>
                       </div>
                     </CardContent>
@@ -1688,18 +2421,20 @@ export default function ConfluxaAdminPage() {
                     <CardHeader>
                       <CardTitle>Admin notes</CardTitle>
                       <CardDescription>
-                        This page is your agency operating layer.
+                        Use this page as the agency operating layer, not the client view.
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4 text-sm text-slate-500">
-                      <p>Tenant dashboard answers: “How is one business doing?”</p>
                       <p>
-                        Admin dashboard answers: “What needs action across all tenants,
+                        Client dashboard answers: “How is one business doing?”
+                      </p>
+                      <p>
+                        Agency admin answers: “What needs action across all tenants,
                         revenue, delivery, and onboarding?”
                       </p>
                       <p>
-                        That is why this page focuses on cross-tenant totals,
-                        performance, system health, and operator actions.
+                        This page now checks auth from <span className="font-medium">/auth/me</span>,
+                        not Supabase client auth.
                       </p>
                     </CardContent>
                   </Card>
@@ -1708,6 +2443,16 @@ export default function ConfluxaAdminPage() {
             )}
           </div>
         </main>
+
+        <CallTranscriptModal
+          open={showTranscriptModal}
+          loading={loadingTranscript}
+          detail={selectedCallDetail}
+          onClose={() => {
+            setShowTranscriptModal(false);
+            setSelectedCallDetail(null);
+          }}
+        />
       </div>
     </div>
   );
