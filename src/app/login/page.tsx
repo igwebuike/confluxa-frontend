@@ -1,17 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { apiFetch } from "@/lib/api";
-
-type LoginResponse = {
-  ok?: boolean;
-  error?: string;
-  user?: {
-    id: string;
-    email: string;
-    global_role: string;
-  };
-};
+import { supabase } from "@/lib/supabase";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -23,24 +13,35 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const res = await apiFetch("/auth/login", {
-        method: "POST",
-        body: JSON.stringify({
-          email: email.trim().toLowerCase(),
-          password,
-        }),
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password,
       });
 
-      const data: LoginResponse = await res.json();
-
-      setLoading(false);
-
-      if (!res.ok || !data.ok || !data.user) {
-        alert(data.error || "Login failed");
+      if (error) {
+        setLoading(false);
+        alert(error.message || "Login failed");
         return;
       }
 
-      const role = (data.user.global_role || "").toLowerCase();
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      setLoading(false);
+
+      if (userError || !user) {
+        alert("Unable to load user session");
+        return;
+      }
+
+      const role =
+        String(
+          user.app_metadata?.role ||
+            user.user_metadata?.role ||
+            ""
+        ).toLowerCase();
 
       if (role === "platform_admin" || role === "admin") {
         window.location.href = "/admin";
