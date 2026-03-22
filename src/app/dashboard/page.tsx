@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 
 import { getSupabaseClient } from "@/lib/supabase";
-import { getEffectiveTenantKey, setTenantKey, clearTenantKey } from "@/lib/tenant-context";
+import { getTenantKey, setTenantKey, clearTenantKey } from "@/lib/tenant-context";
 import { apiFetch } from "@/lib/api";
 
 import {
@@ -356,7 +356,7 @@ export default function DashboardPage() {
       });
 
       // Get tenant from URL (source of truth)
-      let currentTenantKey = getEffectiveTenantKey();
+      let currentTenantKey = getTenantKey();
       
       let options: TenantOption[] = [];
 
