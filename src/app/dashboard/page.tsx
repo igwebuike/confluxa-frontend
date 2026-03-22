@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import {
   Phone,
@@ -19,9 +19,13 @@ import {
   Users,
   Briefcase,
   LogOut,
+  Calendar,
+  PhoneIncoming,
 } from "lucide-react";
 
 import { getSupabaseClient } from "@/lib/supabase";
+import { getEffectiveTenantKey, setTenantKey, clearTenantKey } from "@/lib/tenant-context";
+import { apiFetch } from "@/lib/api";
 
 import {
   Card,
@@ -49,17 +53,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  CartesianGrid,
-  XAxis,
-  YAxis,
-  Tooltip,
-  BarChart,
-  Bar,
-} from "recharts";
 
 type NavKey = "overview" | "calls" | "deals" | "tasks" | "contacts" | "settings";
 
@@ -69,6 +62,7 @@ type AuthUser = {
   full_name?: string;
   global_role?: string;
   is_active?: boolean;
+  accessible_tenants?: string[]; // List of tenant keys this user can access
 };
 
 type DashboardSummary = {
@@ -171,10 +165,6 @@ const NAV_ITEMS: Array<{
   { key: "settings", label: "Settings", icon: Settings },
 ];
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
-  "https://confluxa-core.onrender.com";
-
 const ADMIN_SECRET =
   process.env.NEXT_PUBLIC_ADMIN_SECRET?.trim() || "";
 
@@ -269,28 +259,6 @@ function SectionTitle({
   );
 }
 
-async function apiFetch(path: string, init: RequestInit = {}) {
-  const supabase = getSupabaseClient();
-  const { data: { session } } = await supabase.auth.getSession();
-
-  const headers = new Headers(init.headers || {});
-  if (!headers.has("Content-Type") && !(init.body instanceof FormData)) {
-    headers.set("Content-Type", "application/json");
-  }
-  if (session?.access_token) {
-    headers.set("Authorization", `Bearer ${session.access_token}`);
-  }
-  if (ADMIN_SECRET) {
-    headers.set("X-Admin-Secret", ADMIN_SECRET);
-  }
-
-  return fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers,
-    credentials: "include",
-  });
-}
-
 export default function DashboardPage() {
   const [page, setPage] = useState<NavKey>("overview");
   const [profile, setProfile] = useState<AuthUser | null>(null);
@@ -326,6 +294,7 @@ export default function DashboardPage() {
     try {
       const supabase = getSupabaseClient();
       await supabase.auth.signOut();
+      clearTenantKey(); // Clear tenant context on logout
     } catch (e) {
       console.error(e);
     } finally {
@@ -333,18 +302,25 @@ export default function DashboardPage() {
     }
   }
 
-  function syncTenantKeyToUrl(tenantKey: string) {
-    if (typeof window === "undefined") return;
-    const url = new URL(window.location.href);
-    if (tenantKey) {
+  // Sync tenant to URL and localStorage
+  const syncTenantKey = useCallback((tenantKey: string) => {
+    if (!tenantKey) return;
+    
+    // Update URL without full reload
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
       url.searchParams.set("tenant_key", tenantKey);
-    } else {
-      url.searchParams.delete("tenant_key");
+      window.history.replaceState({}, "", url.toString());
+      
+      // Update localStorage
+      localStorage.setItem("tenant_key", tenantKey);
     }
-    window.history.replaceState({}, "", url.toString());
-  }
+    
+    setSelectedTenantKey(tenantKey);
+  }, []);
 
-  async function loadSupabaseAuthAndTenants() {
+  // Load user auth and their accessible tenants
+  async function loadAuthAndTenants() {
     setAuthLoading(true);
     setError("");
 
@@ -357,6 +333,7 @@ export default function DashboardPage() {
         return;
       }
 
+      // Get user's role
       const globalRole = String(
         user.app_metadata?.role ||
         user.user_metadata?.role ||
@@ -369,6 +346,7 @@ export default function DashboardPage() {
       const isAdminUser = adminRoles.includes(globalRole);
       setIsAdmin(isAdminUser);
 
+      // Set profile
       setProfile({
         id: user.id,
         email: user.email || "",
@@ -377,15 +355,19 @@ export default function DashboardPage() {
         is_active: true,
       });
 
-      const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-      const tenantKeyFromUrl = params?.get("tenant_key") || "";
-
+      // Get tenant from URL (source of truth)
+      let currentTenantKey = getEffectiveTenantKey();
+      
       let options: TenantOption[] = [];
 
       if (isAdminUser) {
-        // Admins can see all tenants
+        // Admins can see all tenants (but still with server-side validation)
         try {
-          const tenantRes = await apiFetch("/api/tenants?scope=all");
+          const tenantRes = await apiFetch("/api/tenants", {
+            enforceTenant: false, // Admin endpoint doesn't require tenant
+            isAdminView: true,
+          });
+          
           if (tenantRes.ok) {
             const tenantData = await tenantRes.json();
             if (Array.isArray(tenantData)) {
@@ -401,37 +383,61 @@ export default function DashboardPage() {
           }
         } catch (e) {
           console.error("Failed to load tenant list for admin:", e);
+          setError("Failed to load tenant list. Please refresh the page.");
         }
       } else {
-        // Regular users: only load from URL or fail
-        if (!tenantKeyFromUrl) {
-          setError("No workspace specified. Please use a valid link.");
+        // Regular users: get their assigned tenants from backend
+        try {
+          const userTenantsRes = await apiFetch("/auth/my-tenants", {
+            enforceTenant: false, // This endpoint returns user's tenants
+          });
+          
+          if (userTenantsRes.ok) {
+            const tenantsData = await userTenantsRes.json();
+            options = tenantsData.map((tenant: any) => ({
+              id: tenant.id,
+              tenant_key: tenant.tenant_key,
+              name: tenant.name,
+              role: tenant.role || "member",
+            }));
+          } else {
+            throw new Error("Failed to fetch user tenants");
+          }
+        } catch (e) {
+          console.error("Failed to load user tenants:", e);
+          setError("Unable to verify workspace access. Please contact support.");
           return;
         }
-        options = [{
-          id: tenantKeyFromUrl,
-          tenant_key: tenantKeyFromUrl,
-          name: "Loading workspace...",
-          role: globalRole || "member",
-        }];
       }
 
       setTenantOptions(options);
 
-      const resolvedTenantKey =
-        tenantKeyFromUrl && options.some((t) => t.tenant_key === tenantKeyFromUrl)
-          ? tenantKeyFromUrl
-          : options[0]?.tenant_key || "";
-
-      if (!resolvedTenantKey && !isAdminUser) {
-        setError("Invalid or missing workspace context.");
+      // Validate current tenant access
+      const accessibleTenantKeys = options.map(t => t.tenant_key);
+      const hasAccess = currentTenantKey && accessibleTenantKeys.includes(currentTenantKey);
+      
+      if (!hasAccess) {
+        // Fallback to first available tenant
+        if (options.length > 0) {
+          currentTenantKey = options[0].tenant_key;
+          syncTenantKey(currentTenantKey);
+        } else {
+          setError("You don't have access to any workspaces.");
+          return;
+        }
+      } else if (currentTenantKey) {
+        syncTenantKey(currentTenantKey);
+      } else {
+        setError("No workspace specified. Please use a valid link.");
         return;
       }
 
-      setSelectedTenantKey(resolvedTenantKey);
-      if (resolvedTenantKey) {
-        syncTenantKeyToUrl(resolvedTenantKey);
-      }
+      // Update profile with accessible tenants
+      setProfile(prev => prev ? {
+        ...prev,
+        accessible_tenants: accessibleTenantKeys,
+      } : null);
+
     } catch (err: any) {
       console.error(err);
       setError(err?.message || "Failed to verify session.");
@@ -441,8 +447,15 @@ export default function DashboardPage() {
     }
   }
 
+  // Load data for specific tenant
   async function loadTenantData(tenantKey: string) {
     if (!tenantKey) return;
+    
+    // Verify access before loading
+    if (profile?.accessible_tenants && !profile.accessible_tenants.includes(tenantKey)) {
+      setError("You don't have access to this workspace");
+      return;
+    }
 
     setLoading(true);
     setRefreshing(true);
@@ -450,9 +463,9 @@ export default function DashboardPage() {
 
     try {
       const [summaryRes, callsRes, leadsRes] = await Promise.all([
-        apiFetch(`/api/dashboard/summary?tenant_key=${encodeURIComponent(tenantKey)}`).then(r => r.json()),
-        apiFetch(`/api/calls?tenant_key=${encodeURIComponent(tenantKey)}&limit=200`).then(r => r.json()),
-        apiFetch(`/api/leads?tenant_key=${encodeURIComponent(tenantKey)}&limit=200`).then(r => r.json()),
+        apiFetch(`/api/dashboard/summary`).then(r => r.json()),
+        apiFetch(`/api/calls?limit=200`).then(r => r.json()),
+        apiFetch(`/api/leads?limit=200`).then(r => r.json()),
       ]);
 
       setSummary(summaryRes || summary);
@@ -476,15 +489,28 @@ export default function DashboardPage() {
     }
   }
 
+  // Handle tenant change
+  const handleTenantChange = useCallback((newTenantKey: string) => {
+    if (!profile?.accessible_tenants?.includes(newTenantKey)) {
+      setError("You don't have access to this workspace");
+      return;
+    }
+    
+    syncTenantKey(newTenantKey);
+    // Data will reload via useEffect when selectedTenantKey changes
+  }, [profile, syncTenantKey]);
+
+  // Initial load
   useEffect(() => {
-    loadSupabaseAuthAndTenants();
+    loadAuthAndTenants();
   }, []);
 
+  // Load data when tenant changes
   useEffect(() => {
-    if (selectedTenantKey) {
+    if (selectedTenantKey && !authLoading) {
       loadTenantData(selectedTenantKey);
     }
-  }, [selectedTenantKey]);
+  }, [selectedTenantKey, authLoading]);
 
   const filteredCalls = useMemo(() => {
     if (!calls.length) return [];
@@ -498,8 +524,6 @@ export default function DashboardPage() {
       );
     });
   }, [calls, search]);
-
-  // Add similar memoized filters for leads, tasks, deals, contacts if needed
 
   if (authLoading) {
     return (
@@ -609,14 +633,11 @@ export default function DashboardPage() {
                   />
                 </div>
 
-                {/* Tenant selector — only for admins */}
-                {isAdmin && tenantOptions.length > 0 && (
+                {/* Tenant selector - only show if multiple tenants available */}
+                {tenantOptions.length > 1 && (
                   <Select
                     value={selectedTenantKey}
-                    onValueChange={(value) => {
-                      setSelectedTenantKey(value);
-                      syncTenantKeyToUrl(value);
-                    }}
+                    onValueChange={handleTenantChange}
                   >
                     <SelectTrigger className="w-[260px] rounded-2xl border-slate-200">
                       <SelectValue placeholder="Select workspace" />
@@ -631,10 +652,10 @@ export default function DashboardPage() {
                   </Select>
                 )}
 
-                {/* For regular users: show fixed workspace name */}
-                {!isAdmin && selectedTenant && (
+                {/* Show current workspace name if only one */}
+                {tenantOptions.length === 1 && selectedTenant && (
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium">
-                    Workspace: {selectedTenant.name || selectedTenantKey}
+                    Workspace: {selectedTenant.name}
                   </div>
                 )}
               </div>
@@ -760,9 +781,6 @@ export default function DashboardPage() {
                     </Card>
                   </motion.div>
                 )}
-
-                {/* Add similar blocks for deals, tasks, contacts, settings */}
-                {/* ... (you can copy-paste your original section code here for the other pages) ... */}
 
                 {!selectedTenantKey && !loading && (
                   <div className="text-center py-20 text-slate-500">
