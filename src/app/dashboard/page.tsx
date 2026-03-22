@@ -452,22 +452,44 @@ export default function DashboardPage() {
         console.error("Summary API error:", summaryRes.status);
       }
       const summaryData = summaryRes.ok ? await summaryRes.json() : null;
+      console.log("Summary data:", summaryData);
       
-      // Fetch calls - handle gracefully
+      // Fetch calls
       let callsData: any[] = [];
       try {
         const callsRes = await apiFetchWrapper(`/api/calls?limit=200`);
         if (callsRes.ok) {
-          callsData = await callsRes.json();
-          console.log("Calls loaded:", callsData.length);
+          const rawCalls = await callsRes.json();
+          console.log("Raw calls API response:", rawCalls);
+          
+          // Transform the calls to match the expected format
+          if (Array.isArray(rawCalls)) {
+            callsData = rawCalls.map((call: any) => ({
+              id: call.id || call.call_id || Math.random().toString(),
+              vapi_call_id: call.vapi_call_id || "",
+              tenant_id: call.tenant_id,
+              tenant_name: call.tenant_name || "Confluxa",
+              caller_name: call.caller_name || `${call.first_name || ""} ${call.last_name || ""}`.trim() || "Unknown",
+              caller_phone: call.caller_phone || call.phone || "",
+              time: call.time || call.created_at,
+              duration_seconds: call.duration_seconds || null,
+              outcome: call.outcome || call.qualification_status || "New",
+              summary: call.summary || "No summary"
+            }));
+            console.log("Processed calls:", callsData.length);
+          } else {
+            console.error("Calls response is not an array:", rawCalls);
+          }
         } else {
           console.error("Calls API error:", callsRes.status);
+          const errorText = await callsRes.text();
+          console.error("Error body:", errorText);
         }
       } catch (err) {
         console.error("Calls fetch error:", err);
       }
       
-      // Fetch leads - handle gracefully (don't break if it fails)
+      // Fetch leads
       let leadsData: any[] = [];
       try {
         const leadsRes = await apiFetchWrapper(`/api/leads?limit=200`);
@@ -476,7 +498,7 @@ export default function DashboardPage() {
           console.log("Leads loaded:", leadsData.length);
         } else {
           console.error("Leads API error:", leadsRes.status);
-          // Generate leads from calls if leads API fails
+          // Generate leads from calls
           if (callsData.length > 0) {
             leadsData = callsData.map((call: any) => ({
               id: call.id,
@@ -484,12 +506,11 @@ export default function DashboardPage() {
               tenant_name: call.tenant_name || "Confluxa",
               name: call.caller_name,
               niche: "General",
-              status: call.outcome || "New",
+              status: call.outcome,
               business: call.tenant_name || "Confluxa",
-              issue: call.summary || "No issue captured",
+              issue: call.summary,
               next_action: "Needs follow-up"
             }));
-            console.log("Generated leads from calls:", leadsData.length);
           }
         }
       } catch (err) {
@@ -497,8 +518,10 @@ export default function DashboardPage() {
       }
 
       setSummary(summaryData || summary);
-      setCalls(Array.isArray(callsData) ? callsData : []);
+      setCalls(callsData);
       setLeads(Array.isArray(leadsData) ? leadsData : []);
+      
+      console.log("Final calls state:", callsData.length);
 
       if (summaryData?.tenant_name && selectedTenant?.name === "Loading...") {
         setTenantOptions(prev =>
