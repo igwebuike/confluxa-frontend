@@ -151,19 +151,6 @@ type ContactRow = {
   created_at?: string | null;
 };
 
-type BackendTenantRow = {
-  id?: string;
-  tenant_key?: string;
-  name?: string;
-  display_name?: string;
-  role?: string;
-  phone_number?: string;
-  status?: string;
-  calls?: number;
-  booked?: number;
-  recovered?: number;
-};
-
 const NAV_ITEMS: Array<{
   key: NavKey;
   label: string;
@@ -194,24 +181,6 @@ function formatDateTime(input?: string | null) {
     hour: "numeric",
     minute: "2-digit",
   });
-}
-
-function formatTime(input?: string | null) {
-  if (!input) return "—";
-  const d = new Date(input);
-  if (Number.isNaN(d.getTime())) return input;
-  return d.toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function formatCurrency(value?: number | null) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(value || 0);
 }
 
 function formatDuration(seconds?: number | null) {
@@ -250,28 +219,6 @@ function StatCard({
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-function SectionTitle({
-  title,
-  description,
-  action,
-}: {
-  title: string;
-  description: string;
-  action?: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4">
-      <div>
-        <h2 className="text-xl font-semibold tracking-tight text-slate-900">
-          {title}
-        </h2>
-        <p className="text-sm text-slate-500">{description}</p>
-      </div>
-      {action}
-    </div>
   );
 }
 
@@ -327,12 +274,9 @@ export default function DashboardPage() {
         
         console.log("User is authenticated:", session.user.email);
         
-        // Get user's role
         const globalRole = String(
           session.user.app_metadata?.role ||
           session.user.user_metadata?.role ||
-          session.user.app_metadata?.global_role ||
-          session.user.user_metadata?.global_role ||
           "member"
         ).toLowerCase();
 
@@ -340,10 +284,7 @@ export default function DashboardPage() {
         const isAdminUser = adminRoles.includes(globalRole);
         setIsAdmin(isAdminUser);
         
-        // Get default tenant from user metadata
-        const defaultTenant = session.user.user_metadata?.default_tenant || 
-                               session.user.app_metadata?.default_tenant ||
-                               null;
+        const defaultTenant = session.user.user_metadata?.default_tenant || null;
 
         setProfile({
           id: session.user.id,
@@ -354,7 +295,6 @@ export default function DashboardPage() {
           default_tenant: defaultTenant || undefined,
         });
         
-        // Get tenant from URL or user metadata
         let tenantKey = getTenantKey();
         if (!tenantKey && defaultTenant) {
           tenantKey = defaultTenant;
@@ -432,7 +372,6 @@ export default function DashboardPage() {
     setError("");
 
     try {
-      // Check session first
       const supabase = getSupabaseClient();
       const { data: { session } } = await supabase.auth.getSession();
       
@@ -448,45 +387,54 @@ export default function DashboardPage() {
       
       // Fetch summary
       const summaryRes = await apiFetchWrapper(`/api/dashboard/summary`);
-      if (!summaryRes.ok) {
+      let summaryData = null;
+      if (summaryRes.ok) {
+        summaryData = await summaryRes.json();
+        console.log("Summary data:", summaryData);
+      } else {
         console.error("Summary API error:", summaryRes.status);
       }
-      const summaryData = summaryRes.ok ? await summaryRes.json() : null;
-      console.log("Summary data:", summaryData);
       
-      // Fetch calls
-      let callsData: any[] = [];
+      // Fetch calls - DIRECT FETCH WITHOUT API WRAPPER TO DEBUG
+      let callsData: CallRow[] = [];
       try {
-        const callsRes = await apiFetchWrapper(`/api/calls?limit=200`);
-        if (callsRes.ok) {
-          const rawCalls = await callsRes.json();
-          console.log("Raw calls API response:", rawCalls);
+        console.log("Fetching calls from:", `${API_BASE}/api/calls?tenant_key=${tenantKey}`);
+        const directRes = await fetch(`${API_BASE}/api/calls?tenant_key=${tenantKey}`, {
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+        });
+        
+        if (directRes.ok) {
+          const rawCalls = await directRes.json();
+          console.log("Raw calls response:", rawCalls);
+          console.log("Raw calls type:", typeof rawCalls);
+          console.log("Is array:", Array.isArray(rawCalls));
           
-          // Transform the calls to match the expected format
           if (Array.isArray(rawCalls)) {
             callsData = rawCalls.map((call: any) => ({
-              id: call.id || call.call_id || Math.random().toString(),
-              vapi_call_id: call.vapi_call_id || "",
-              tenant_id: call.tenant_id,
-              tenant_name: call.tenant_name || "Confluxa",
-              caller_name: call.caller_name || `${call.first_name || ""} ${call.last_name || ""}`.trim() || "Unknown",
-              caller_phone: call.caller_phone || call.phone || "",
+              id: call.id,
+              caller_name: call.caller_name || "Unknown",
+              caller_phone: call.caller_phone || "",
               time: call.time || call.created_at,
               duration_seconds: call.duration_seconds || null,
-              outcome: call.outcome || call.qualification_status || "New",
-              summary: call.summary || "No summary"
+              outcome: call.outcome || "New",
+              summary: call.summary || "No summary",
+              tenant_name: call.tenant_name || "Confluxa",
             }));
             console.log("Processed calls:", callsData.length);
+            console.log("First call:", callsData[0]);
           } else {
             console.error("Calls response is not an array:", rawCalls);
           }
         } else {
-          console.error("Calls API error:", callsRes.status);
-          const errorText = await callsRes.text();
+          console.error("Direct calls API error:", directRes.status);
+          const errorText = await directRes.text();
           console.error("Error body:", errorText);
         }
       } catch (err) {
-        console.error("Calls fetch error:", err);
+        console.error("Direct calls fetch error:", err);
       }
       
       // Fetch leads
@@ -495,21 +443,17 @@ export default function DashboardPage() {
         const leadsRes = await apiFetchWrapper(`/api/leads?limit=200`);
         if (leadsRes.ok) {
           leadsData = await leadsRes.json();
-          console.log("Leads loaded:", leadsData.length);
         } else {
           console.error("Leads API error:", leadsRes.status);
-          // Generate leads from calls
           if (callsData.length > 0) {
             leadsData = callsData.map((call: any) => ({
               id: call.id,
-              tenant_id: call.tenant_id,
-              tenant_name: call.tenant_name || "Confluxa",
               name: call.caller_name,
-              niche: "General",
               status: call.outcome,
               business: call.tenant_name || "Confluxa",
               issue: call.summary,
-              next_action: "Needs follow-up"
+              next_action: "Needs follow-up",
+              niche: "General",
             }));
           }
         }
@@ -521,7 +465,8 @@ export default function DashboardPage() {
       setCalls(callsData);
       setLeads(Array.isArray(leadsData) ? leadsData : []);
       
-      console.log("Final calls state:", callsData.length);
+      console.log("Final calls state length:", callsData.length);
+      console.log("Final calls state:", callsData);
 
       if (summaryData?.tenant_name && selectedTenant?.name === "Loading...") {
         setTenantOptions(prev =>
@@ -532,7 +477,7 @@ export default function DashboardPage() {
       }
     } catch (err: any) {
       console.error("Failed to load tenant data:", err);
-      setError(`Could not load workspace data. Please try again.`);
+      setError(`Could not load workspace data: ${err.message}`);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -566,19 +511,6 @@ export default function DashboardPage() {
       );
     });
   }, [calls, search]);
-
-  const filteredLeads = useMemo(() => {
-    if (!leads.length) return [];
-    return leads.filter(lead => {
-      const q = search.toLowerCase();
-      return (
-        lead.name?.toLowerCase().includes(q) ||
-        lead.business?.toLowerCase().includes(q) ||
-        lead.issue?.toLowerCase().includes(q) ||
-        lead.status?.toLowerCase().includes(q)
-      );
-    });
-  }, [leads, search]);
 
   // Show loading while checking auth
   if (isCheckingAuth || authLoading) {
@@ -704,26 +636,6 @@ export default function DashboardPage() {
                   />
                 </div>
 
-                {/* Tenant selector - only for admins */}
-                {isAdmin && tenantOptions.length > 1 && (
-                  <Select
-                    value={selectedTenantKey}
-                    onValueChange={handleTenantChange}
-                  >
-                    <SelectTrigger className="w-[260px] rounded-2xl border-slate-200">
-                      <SelectValue placeholder="Select workspace" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {tenantOptions.map((tenant) => (
-                        <SelectItem key={tenant.id} value={tenant.tenant_key}>
-                          {tenant.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-
-                {/* For regular users: show fixed workspace name */}
                 {!isAdmin && selectedTenant && (
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium">
                     Workspace: {selectedTenant.name || selectedTenantKey}
@@ -733,7 +645,6 @@ export default function DashboardPage() {
             </div>
           </header>
 
-          {/* Main content area */}
           <div className="p-6">
             {loading ? (
               <div className="flex items-center justify-center h-64">
@@ -741,7 +652,6 @@ export default function DashboardPage() {
               </div>
             ) : (
               <>
-                {/* Overview Section */}
                 {page === "overview" && (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                     <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
@@ -771,7 +681,6 @@ export default function DashboardPage() {
                       />
                     </div>
 
-                    {/* Recent Calls Table */}
                     <Card className="mt-8">
                       <CardHeader>
                         <CardTitle>Recent Calls</CardTitle>
@@ -818,7 +727,6 @@ export default function DashboardPage() {
                   </motion.div>
                 )}
 
-                {/* Calls Section */}
                 {page === "calls" && (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                     <Card>
@@ -887,15 +795,6 @@ export default function DashboardPage() {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {deals.map((deal) => (
-                              <TableRow key={deal.id}>
-                                <TableCell className="font-medium">{deal.title}</TableCell>
-                                <TableCell>{deal.stage || deal.status || "New"}</TableCell>
-                                <TableCell>{formatCurrency(deal.estimated_value)}</TableCell>
-                                <TableCell>{deal.probability || 0}%</TableCell>
-                                <TableCell>{deal.contact_name || "—"}</TableCell>
-                              </TableRow>
-                            ))}
                             {deals.length === 0 && (
                               <TableRow>
                                 <TableCell colSpan={5} className="text-center text-slate-500">
@@ -930,21 +829,6 @@ export default function DashboardPage() {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {tasks.map((task) => (
-                              <TableRow key={task.id}>
-                                <TableCell className="font-medium">{task.title}</TableCell>
-                                <TableCell>
-                                  <Badge variant="secondary">{task.status}</Badge>
-                                </TableCell>
-                                <TableCell>
-                                  <Badge variant={task.priority === "high" ? "destructive" : "secondary"}>
-                                    {task.priority || "medium"}
-                                  </Badge>
-                                </TableCell>
-                                <TableCell>{task.due_at ? new Date(task.due_at).toLocaleDateString() : "—"}</TableCell>
-                                <TableCell>{task.contact_name || "—"}</TableCell>
-                              </TableRow>
-                            ))}
                             {tasks.length === 0 && (
                               <TableRow>
                                 <TableCell colSpan={5} className="text-center text-slate-500">
@@ -979,15 +863,6 @@ export default function DashboardPage() {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {contacts.map((contact) => (
-                              <TableRow key={contact.id}>
-                                <TableCell className="font-medium">{contact.name}</TableCell>
-                                <TableCell>{contact.email || "—"}</TableCell>
-                                <TableCell>{contact.phone || "—"}</TableCell>
-                                <TableCell>{contact.company || "—"}</TableCell>
-                                <TableCell>{contact.created_at ? new Date(contact.created_at).toLocaleDateString() : "—"}</TableCell>
-                              </TableRow>
-                            ))}
                             {contacts.length === 0 && (
                               <TableRow>
                                 <TableCell colSpan={5} className="text-center text-slate-500">
@@ -1027,12 +902,6 @@ export default function DashboardPage() {
                       </CardContent>
                     </Card>
                   </motion.div>
-                )}
-
-                {!selectedTenantKey && !loading && (
-                  <div className="text-center py-20 text-slate-500">
-                    No workspace selected. Please contact support or use a valid link.
-                  </div>
                 )}
               </>
             )}
