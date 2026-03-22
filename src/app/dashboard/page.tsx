@@ -62,7 +62,7 @@ type AuthUser = {
   full_name?: string;
   global_role?: string;
   is_active?: boolean;
-  accessible_tenants?: string[]; // List of tenant keys this user can access
+  accessible_tenants?: string[];
 };
 
 type DashboardSummary = {
@@ -110,48 +110,6 @@ type TenantOption = {
   role?: string;
 };
 
-type TaskRow = {
-  id: string;
-  title: string;
-  status: string;
-  priority?: string;
-  due_at?: string | null;
-  description?: string | null;
-  contact_name?: string;
-};
-
-type DealRow = {
-  id: string;
-  title: string;
-  stage?: string;
-  status?: string;
-  estimated_value?: number | null;
-  probability?: number | null;
-  contact_name?: string;
-};
-
-type ContactRow = {
-  id: string;
-  name: string;
-  email?: string | null;
-  phone?: string | null;
-  company?: string | null;
-  created_at?: string | null;
-};
-
-type BackendTenantRow = {
-  id?: string;
-  tenant_key?: string;
-  name?: string;
-  display_name?: string;
-  role?: string;
-  phone_number?: string;
-  status?: string;
-  calls?: number;
-  booked?: number;
-  recovered?: number;
-};
-
 const NAV_ITEMS: Array<{
   key: NavKey;
   label: string;
@@ -165,9 +123,6 @@ const NAV_ITEMS: Array<{
   { key: "settings", label: "Settings", icon: Settings },
 ];
 
-const ADMIN_SECRET =
-  process.env.NEXT_PUBLIC_ADMIN_SECRET?.trim() || "";
-
 function formatDateTime(input?: string | null) {
   if (!input) return "—";
   const d = new Date(input);
@@ -178,24 +133,6 @@ function formatDateTime(input?: string | null) {
     hour: "numeric",
     minute: "2-digit",
   });
-}
-
-function formatTime(input?: string | null) {
-  if (!input) return "—";
-  const d = new Date(input);
-  if (Number.isNaN(d.getTime())) return input;
-  return d.toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function formatCurrency(value?: number | null) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(value || 0);
 }
 
 function formatDuration(seconds?: number | null) {
@@ -237,28 +174,6 @@ function StatCard({
   );
 }
 
-function SectionTitle({
-  title,
-  description,
-  action,
-}: {
-  title: string;
-  description: string;
-  action?: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4">
-      <div>
-        <h2 className="text-xl font-semibold tracking-tight text-slate-900">
-          {title}
-        </h2>
-        <p className="text-sm text-slate-500">{description}</p>
-      </div>
-      {action}
-    </div>
-  );
-}
-
 export default function DashboardPage() {
   const [page, setPage] = useState<NavKey>("overview");
   const [profile, setProfile] = useState<AuthUser | null>(null);
@@ -267,7 +182,6 @@ export default function DashboardPage() {
   const [search, setSearch] = useState("");
   const [authLoading, setAuthLoading] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
   const [summary, setSummary] = useState<DashboardSummary>({
@@ -279,9 +193,6 @@ export default function DashboardPage() {
 
   const [calls, setCalls] = useState<CallRow[]>([]);
   const [leads, setLeads] = useState<LeadRow[]>([]);
-  const [tasks, setTasks] = useState<TaskRow[]>([]);
-  const [deals, setDeals] = useState<DealRow[]>([]);
-  const [contacts, setContacts] = useState<ContactRow[]>([]);
 
   const [isAdmin, setIsAdmin] = useState(false);
 
@@ -294,7 +205,7 @@ export default function DashboardPage() {
     try {
       const supabase = getSupabaseClient();
       await supabase.auth.signOut();
-      clearTenantKey(); // Clear tenant context on logout
+      clearTenantKey();
     } catch (e) {
       console.error(e);
     } finally {
@@ -302,24 +213,19 @@ export default function DashboardPage() {
     }
   }
 
-  // Sync tenant to URL and localStorage
   const syncTenantKey = useCallback((tenantKey: string) => {
     if (!tenantKey) return;
     
-    // Update URL without full reload
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href);
       url.searchParams.set("tenant_key", tenantKey);
       window.history.replaceState({}, "", url.toString());
-      
-      // Update localStorage
       localStorage.setItem("tenant_key", tenantKey);
     }
     
     setSelectedTenantKey(tenantKey);
   }, []);
 
-  // Load user auth and their accessible tenants
   async function loadAuthAndTenants() {
     setAuthLoading(true);
     setError("");
@@ -346,7 +252,6 @@ export default function DashboardPage() {
       const isAdminUser = adminRoles.includes(globalRole);
       setIsAdmin(isAdminUser);
 
-      // Set profile
       setProfile({
         id: user.id,
         email: user.email || "",
@@ -355,157 +260,140 @@ export default function DashboardPage() {
         is_active: true,
       });
 
-      // Get tenant from URL (source of truth)
+      // Get tenant from URL
       let currentTenantKey = getTenantKey();
       
       let options: TenantOption[] = [];
 
-      if (isAdminUser) {
-        // Admins can see all tenants (but still with server-side validation)
-        try {
-          const tenantRes = await apiFetch("/api/tenants", {
-            enforceTenant: false, // Admin endpoint doesn't require tenant
-            isAdminView: true,
-          });
-          
-          if (tenantRes.ok) {
-            const tenantData = await tenantRes.json();
-            if (Array.isArray(tenantData)) {
-              options = tenantData
-                .filter((row: BackendTenantRow) => row?.tenant_key && row?.name)
-                .map((row: BackendTenantRow) => ({
-                  id: String(row.id || row.tenant_key || ""),
-                  tenant_key: String(row.tenant_key || ""),
-                  name: String(row.name || row.display_name || row.tenant_key || ""),
-                  role: String(row.role || globalRole),
-                }));
-            }
-          }
-        } catch (e) {
-          console.error("Failed to load tenant list for admin:", e);
-          setError("Failed to load tenant list. Please refresh the page.");
-        }
-      } else {
-        // Regular users: get their assigned tenants from backend
-        try {
-          const userTenantsRes = await apiFetch("/auth/my-tenants", {
-            enforceTenant: false, // This endpoint returns user's tenants
-          });
-          
-          if (userTenantsRes.ok) {
-            const tenantsData = await userTenantsRes.json();
-            options = tenantsData.map((tenant: any) => ({
-              id: tenant.id,
-              tenant_key: tenant.tenant_key,
-              name: tenant.name,
-              role: tenant.role || "member",
-            }));
-          } else {
-            throw new Error("Failed to fetch user tenants");
-          }
-        } catch (e) {
-          console.error("Failed to load user tenants:", e);
-          setError("Unable to verify workspace access. Please contact support.");
-          return;
-        }
-      }
-
-      setTenantOptions(options);
-
-      // Validate current tenant access
-      const accessibleTenantKeys = options.map(t => t.tenant_key);
-      const hasAccess = currentTenantKey && accessibleTenantKeys.includes(currentTenantKey);
-      
-      if (!hasAccess) {
-        // Fallback to first available tenant
-        if (options.length > 0) {
-          currentTenantKey = options[0].tenant_key;
-          syncTenantKey(currentTenantKey);
-        } else {
-          setError("You don't have access to any workspaces.");
-          return;
-        }
-      } else if (currentTenantKey) {
+      // For now, use the tenant from URL or localStorage
+      if (currentTenantKey) {
+        // Use the tenant from URL as the only option
+        options = [{
+          id: currentTenantKey,
+          tenant_key: currentTenantKey,
+          name: "Current Workspace",
+          role: globalRole,
+        }];
+        setTenantOptions(options);
         syncTenantKey(currentTenantKey);
       } else {
-        setError("No workspace specified. Please use a valid link.");
-        return;
+        // If no tenant in URL, try to get from dashboard summary (fallback)
+        try {
+          // Try to load dashboard summary to get tenant info
+          const summaryRes = await apiFetch("/api/dashboard/summary", {
+            enforceTenant: false,
+          });
+          
+          if (summaryRes.ok) {
+            const summaryData = await summaryRes.json();
+            if (summaryData?.tenant_key) {
+              currentTenantKey = summaryData.tenant_key;
+              options = [{
+                id: currentTenantKey,
+                tenant_key: currentTenantKey,
+                name: summaryData.tenant_name || "Current Workspace",
+                role: globalRole,
+              }];
+              setTenantOptions(options);
+              syncTenantKey(currentTenantKey);
+            } else {
+              throw new Error("No tenant data found");
+            }
+          } else {
+            throw new Error("Failed to load tenant data");
+          }
+        } catch (err) {
+          console.error("Failed to auto-detect tenant:", err);
+          setError("No workspace specified. Please use a valid link with ?tenant_key=your-workspace");
+          setAuthLoading(false);
+          return;
+        }
       }
 
-      // Update profile with accessible tenants
       setProfile(prev => prev ? {
         ...prev,
-        accessible_tenants: accessibleTenantKeys,
+        accessible_tenants: options.map(t => t.tenant_key),
       } : null);
 
     } catch (err: any) {
       console.error(err);
       setError(err?.message || "Failed to verify session.");
-      window.location.replace("/login");
+      setTimeout(() => {
+        window.location.replace("/login");
+      }, 2000);
     } finally {
       setAuthLoading(false);
     }
   }
 
-  // Load data for specific tenant
   async function loadTenantData(tenantKey: string) {
     if (!tenantKey) return;
-    
-    // Verify access before loading
-    if (profile?.accessible_tenants && !profile.accessible_tenants.includes(tenantKey)) {
-      setError("You don't have access to this workspace");
-      return;
-    }
 
     setLoading(true);
-    setRefreshing(true);
     setError("");
 
     try {
-      const [summaryRes, callsRes, leadsRes] = await Promise.all([
-        apiFetch(`/api/dashboard/summary`).then(r => r.json()),
-        apiFetch(`/api/calls?limit=200`).then(r => r.json()),
-        apiFetch(`/api/leads?limit=200`).then(r => r.json()),
+      // Try to load dashboard summary first to verify access
+      const summaryRes = await apiFetch(`/api/dashboard/summary`);
+      
+      if (!summaryRes.ok) {
+        if (summaryRes.status === 403) {
+          setError("You don't have access to this workspace. Please contact support.");
+          setLoading(false);
+          return;
+        }
+        throw new Error(`Failed to load data: ${summaryRes.status}`);
+      }
+      
+      const summaryData = await summaryRes.json();
+      setSummary(summaryData || summary);
+
+      // Load calls and leads
+      const [callsRes, leadsRes] = await Promise.all([
+        apiFetch(`/api/calls?limit=200`),
+        apiFetch(`/api/leads?limit=200`),
       ]);
 
-      setSummary(summaryRes || summary);
-      setCalls(Array.isArray(callsRes) ? callsRes : []);
-      setLeads(Array.isArray(leadsRes) ? leadsRes : []);
+      if (callsRes.ok) {
+        const callsData = await callsRes.json();
+        setCalls(Array.isArray(callsData) ? callsData : []);
+      } else if (callsRes.status === 403) {
+        console.warn("Access denied to calls");
+        setCalls([]);
+      }
 
-      // Update tenant name if we got it from summary
-      if (summaryRes?.tenant_name && selectedTenant?.name === "Loading workspace...") {
+      if (leadsRes.ok) {
+        const leadsData = await leadsRes.json();
+        setLeads(Array.isArray(leadsData) ? leadsData : []);
+      } else if (leadsRes.status === 403) {
+        console.warn("Access denied to leads");
+        setLeads([]);
+      }
+
+      // Update tenant name if we got it
+      if (summaryData?.tenant_name && selectedTenant?.name === "Current Workspace") {
         setTenantOptions(prev =>
           prev.map(opt =>
-            opt.tenant_key === tenantKey ? { ...opt, name: summaryRes.tenant_name } : opt
+            opt.tenant_key === tenantKey ? { ...opt, name: summaryData.tenant_name } : opt
           )
         );
       }
     } catch (err: any) {
       console.error("Failed to load tenant data:", err);
-      setError("Could not load workspace data. Please try again.");
+      setError(err?.message || "Could not load workspace data. Please try again.");
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   }
 
-  // Handle tenant change
   const handleTenantChange = useCallback((newTenantKey: string) => {
-    if (!profile?.accessible_tenants?.includes(newTenantKey)) {
-      setError("You don't have access to this workspace");
-      return;
-    }
-    
     syncTenantKey(newTenantKey);
-    // Data will reload via useEffect when selectedTenantKey changes
-  }, [profile, syncTenantKey]);
+  }, [syncTenantKey]);
 
-  // Initial load
   useEffect(() => {
     loadAuthAndTenants();
   }, []);
 
-  // Load data when tenant changes
   useEffect(() => {
     if (selectedTenantKey && !authLoading) {
       loadTenantData(selectedTenantKey);
@@ -551,7 +439,6 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <div className="grid min-h-screen lg:grid-cols-[260px_1fr]">
-        {/* Sidebar */}
         <aside className="border-r border-slate-200 bg-white hidden lg:block">
           <div className="flex h-full flex-col">
             <div className="border-b border-slate-200 p-6">
@@ -612,13 +499,7 @@ export default function DashboardPage() {
                     ? "Your key metrics and recent activity"
                     : page === "calls"
                     ? "All inbound and outbound calls"
-                    : page === "deals"
-                    ? "Active opportunities and pipeline"
-                    : page === "tasks"
-                    ? "Follow-ups and action items"
-                    : page === "contacts"
-                    ? "People and companies in your CRM"
-                    : "Workspace configuration"}
+                    : "Workspace data"}
                 </p>
               </div>
 
@@ -633,27 +514,7 @@ export default function DashboardPage() {
                   />
                 </div>
 
-                {/* Tenant selector - only show if multiple tenants available */}
-                {tenantOptions.length > 1 && (
-                  <Select
-                    value={selectedTenantKey}
-                    onValueChange={handleTenantChange}
-                  >
-                    <SelectTrigger className="w-[260px] rounded-2xl border-slate-200">
-                      <SelectValue placeholder="Select workspace" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {tenantOptions.map((tenant) => (
-                        <SelectItem key={tenant.id} value={tenant.tenant_key}>
-                          {tenant.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-
-                {/* Show current workspace name if only one */}
-                {tenantOptions.length === 1 && selectedTenant && (
+                {tenantOptions.length > 0 && selectedTenant && (
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium">
                     Workspace: {selectedTenant.name}
                   </div>
@@ -662,7 +523,6 @@ export default function DashboardPage() {
             </div>
           </header>
 
-          {/* Main content area */}
           <div className="p-6">
             {loading ? (
               <div className="flex items-center justify-center h-64">
@@ -670,7 +530,6 @@ export default function DashboardPage() {
               </div>
             ) : (
               <>
-                {/* Overview Section */}
                 {page === "overview" && (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                     <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
@@ -700,7 +559,6 @@ export default function DashboardPage() {
                       />
                     </div>
 
-                    {/* Recent Calls Table */}
                     <Card className="mt-8">
                       <CardHeader>
                         <CardTitle>Recent Calls</CardTitle>
@@ -740,7 +598,6 @@ export default function DashboardPage() {
                   </motion.div>
                 )}
 
-                {/* Calls Section */}
                 {page === "calls" && (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                     <Card>
@@ -784,7 +641,7 @@ export default function DashboardPage() {
 
                 {!selectedTenantKey && !loading && (
                   <div className="text-center py-20 text-slate-500">
-                    No workspace selected. Please contact support or use a valid link.
+                    No workspace selected. Please use a valid link with ?tenant_key=your-workspace
                   </div>
                 )}
               </>
