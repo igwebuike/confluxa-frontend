@@ -276,25 +276,7 @@ function SectionTitle({
 }
 
 async function apiFetchWrapper(path: string, init: RequestInit = {}) {
-  const supabase = getSupabaseClient();
-  const { data: { session } } = await supabase.auth.getSession();
-
-  const headers = new Headers(init.headers || {});
-  if (!headers.has("Content-Type") && !(init.body instanceof FormData)) {
-    headers.set("Content-Type", "application/json");
-  }
-  if (session?.access_token) {
-    headers.set("Authorization", `Bearer ${session.access_token}`);
-  }
-  if (ADMIN_SECRET) {
-    headers.set("X-Admin-Secret", ADMIN_SECRET);
-  }
-
-  return fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers,
-    credentials: "include",
-  });
+  return apiFetch(path, init);
 }
 
 export default function DashboardPage() {
@@ -450,42 +432,66 @@ export default function DashboardPage() {
     setError("");
 
     try {
-      const [summaryRes, callsRes, leadsRes] = await Promise.all([
-        apiFetchWrapper(`/api/dashboard/summary`).then(r => {
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          return r.json();
-        }),
-        apiFetchWrapper(`/api/calls?limit=200`).then(r => {
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          return r.json();
-        }),
-        apiFetchWrapper(`/api/leads?limit=200`).then(r => {
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          return r.json();
-        }),
-      ]);
+      // Check session first
+      const supabase = getSupabaseClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        setError("Please login to continue");
+        setTimeout(() => {
+          window.location.href = "/login";
+        }, 2000);
+        return;
+      }
+      
+      console.log("Loading data for tenant:", tenantKey);
+      
+      // Try to fetch summary
+      const summaryRes = await apiFetchWrapper(`/api/dashboard/summary`);
+      
+      if (!summaryRes.ok) {
+        const errorText = await summaryRes.text();
+        console.error("Summary API error:", summaryRes.status, errorText);
+        throw new Error(`API Error ${summaryRes.status}`);
+      }
+      
+      const summaryData = await summaryRes.json();
+      console.log("Summary data loaded");
+      
+      // Try to fetch calls
+      const callsRes = await apiFetchWrapper(`/api/calls?limit=200`);
+      let callsData = [];
+      if (callsRes.ok) {
+        callsData = await callsRes.json();
+        console.log("Calls count:", callsData.length);
+      } else {
+        console.error("Calls API error:", callsRes.status);
+      }
+      
+      // Try to fetch leads
+      const leadsRes = await apiFetchWrapper(`/api/leads?limit=200`);
+      let leadsData = [];
+      if (leadsRes.ok) {
+        leadsData = await leadsRes.json();
+        console.log("Leads count:", leadsData.length);
+      } else {
+        console.error("Leads API error:", leadsRes.status);
+      }
 
-      setSummary(summaryRes || summary);
-      setCalls(Array.isArray(callsRes) ? callsRes : []);
-      setLeads(Array.isArray(leadsRes) ? leadsRes : []);
+      setSummary(summaryData || summary);
+      setCalls(Array.isArray(callsData) ? callsData : []);
+      setLeads(Array.isArray(leadsData) ? leadsData : []);
 
-      if (summaryRes?.tenant_name && selectedTenant?.name === "Loading...") {
+      if (summaryData?.tenant_name && selectedTenant?.name === "Loading...") {
         setTenantOptions(prev =>
           prev.map(opt =>
-            opt.tenant_key === tenantKey ? { ...opt, name: summaryRes.tenant_name } : opt
+            opt.tenant_key === tenantKey ? { ...opt, name: summaryData.tenant_name } : opt
           )
         );
       }
     } catch (err: any) {
       console.error("Failed to load tenant data:", err);
-      if (err.message?.includes("401") || err.message?.includes("403")) {
-        setError("Session expired. Please login again.");
-        setTimeout(() => {
-          window.location.href = "/login";
-        }, 2000);
-      } else {
-        setError("Could not load workspace data. Please try again.");
-      }
+      setError(`Could not load workspace data. Please try again.`);
     } finally {
       setLoading(false);
       setRefreshing(false);

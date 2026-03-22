@@ -1,4 +1,6 @@
 // lib/api.ts
+// API client with tenant context and authentication
+
 const RAW_API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
   "https://confluxa-core.onrender.com";
@@ -63,7 +65,7 @@ export async function apiFetch(
     headers.set("Content-Type", "application/json");
   }
   
-  // Add auth headers
+  // Add auth headers from Supabase
   if (isBrowser()) {
     try {
       const { getSupabaseClient } = await import("./supabase");

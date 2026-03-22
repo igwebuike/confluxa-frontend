@@ -26,6 +26,9 @@ export function getTenantKey(): string | null {
   return localStorage.getItem("tenant_key");
 }
 
+// Alias for getTenantKey to maintain compatibility
+export const getEffectiveTenantKey = getTenantKey;
+
 export function setTenantKey(tenantKey: string, updateUrl: boolean = true) {
   if (!isBrowser()) return;
   
