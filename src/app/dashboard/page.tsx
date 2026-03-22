@@ -440,17 +440,6 @@ export default function DashboardPage() {
           console.log("Leads loaded:", leadsData.length);
         } else {
           console.error("Leads API error:", leadsRes.status);
-          if (callsData.length > 0) {
-            leadsData = callsData.map((call: any) => ({
-              id: call.id,
-              name: call.caller_name,
-              status: call.outcome,
-              business: call.tenant_name || "Confluxa",
-              issue: call.summary,
-              next_action: "Needs follow-up",
-              niche: "General",
-            }));
-          }
         }
       } catch (err) {
         console.error("Leads fetch error:", err);
