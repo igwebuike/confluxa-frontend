@@ -376,7 +376,9 @@ export default function DashboardPage() {
         let tenantKey = getTenantKey();
         if (!tenantKey && defaultTenant) {
           tenantKey = defaultTenant;
-          setTenantKey(tenantKey);
+          if (tenantKey) {
+            setTenantKey(tenantKey);
+          }
         }
         
         let options: TenantOption[] = [];
