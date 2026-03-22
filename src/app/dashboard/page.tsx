@@ -53,6 +53,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip,
+  BarChart,
+  Bar,
+} from "recharts";
 
 type NavKey = "overview" | "calls" | "deals" | "tasks" | "contacts" | "settings";
 
@@ -111,6 +122,48 @@ type TenantOption = {
   role?: string;
 };
 
+type TaskRow = {
+  id: string;
+  title: string;
+  status: string;
+  priority?: string;
+  due_at?: string | null;
+  description?: string | null;
+  contact_name?: string;
+};
+
+type DealRow = {
+  id: string;
+  title: string;
+  stage?: string;
+  status?: string;
+  estimated_value?: number | null;
+  probability?: number | null;
+  contact_name?: string;
+};
+
+type ContactRow = {
+  id: string;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  company?: string | null;
+  created_at?: string | null;
+};
+
+type BackendTenantRow = {
+  id?: string;
+  tenant_key?: string;
+  name?: string;
+  display_name?: string;
+  role?: string;
+  phone_number?: string;
+  status?: string;
+  calls?: number;
+  booked?: number;
+  recovered?: number;
+};
+
 const NAV_ITEMS: Array<{
   key: NavKey;
   label: string;
@@ -124,6 +177,13 @@ const NAV_ITEMS: Array<{
   { key: "settings", label: "Settings", icon: Settings },
 ];
 
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
+  "https://confluxa-core.onrender.com";
+
+const ADMIN_SECRET =
+  process.env.NEXT_PUBLIC_ADMIN_SECRET?.trim() || "";
+
 function formatDateTime(input?: string | null) {
   if (!input) return "—";
   const d = new Date(input);
@@ -134,6 +194,24 @@ function formatDateTime(input?: string | null) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function formatTime(input?: string | null) {
+  if (!input) return "—";
+  const d = new Date(input);
+  if (Number.isNaN(d.getTime())) return input;
+  return d.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatCurrency(value?: number | null) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(value || 0);
 }
 
 function formatDuration(seconds?: number | null) {
@@ -175,6 +253,50 @@ function StatCard({
   );
 }
 
+function SectionTitle({
+  title,
+  description,
+  action,
+}: {
+  title: string;
+  description: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div>
+        <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+          {title}
+        </h2>
+        <p className="text-sm text-slate-500">{description}</p>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+async function apiFetchWrapper(path: string, init: RequestInit = {}) {
+  const supabase = getSupabaseClient();
+  const { data: { session } } = await supabase.auth.getSession();
+
+  const headers = new Headers(init.headers || {});
+  if (!headers.has("Content-Type") && !(init.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (session?.access_token) {
+    headers.set("Authorization", `Bearer ${session.access_token}`);
+  }
+  if (ADMIN_SECRET) {
+    headers.set("X-Admin-Secret", ADMIN_SECRET);
+  }
+
+  return fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers,
+    credentials: "include",
+  });
+}
+
 export default function DashboardPage() {
   const [page, setPage] = useState<NavKey>("overview");
   const [profile, setProfile] = useState<AuthUser | null>(null);
@@ -183,7 +305,9 @@ export default function DashboardPage() {
   const [search, setSearch] = useState("");
   const [authLoading, setAuthLoading] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
   const [summary, setSummary] = useState<DashboardSummary>({
     calls_today: 0,
@@ -194,6 +318,9 @@ export default function DashboardPage() {
 
   const [calls, setCalls] = useState<CallRow[]>([]);
   const [leads, setLeads] = useState<LeadRow[]>([]);
+  const [tasks, setTasks] = useState<TaskRow[]>([]);
+  const [deals, setDeals] = useState<DealRow[]>([]);
+  const [contacts, setContacts] = useState<ContactRow[]>([]);
 
   const [isAdmin, setIsAdmin] = useState(false);
 
@@ -201,6 +328,92 @@ export default function DashboardPage() {
     () => tenantOptions.find((t) => t.tenant_key === selectedTenantKey) || null,
     [tenantOptions, selectedTenantKey]
   );
+
+  // CHECK AUTHENTICATION FIRST
+  useEffect(() => {
+    async function checkAuth() {
+      setIsCheckingAuth(true);
+      try {
+        const supabase = getSupabaseClient();
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        
+        if (sessionError || !session) {
+          console.log("No active session, redirecting to login");
+          window.location.href = "/login";
+          return;
+        }
+        
+        console.log("User is authenticated:", session.user.email);
+        
+        // Get user's role
+        const globalRole = String(
+          session.user.app_metadata?.role ||
+          session.user.user_metadata?.role ||
+          session.user.app_metadata?.global_role ||
+          session.user.user_metadata?.global_role ||
+          "member"
+        ).toLowerCase();
+
+        const adminRoles = ["platform_admin", "admin", "owner"];
+        const isAdminUser = adminRoles.includes(globalRole);
+        setIsAdmin(isAdminUser);
+        
+        // Get default tenant from user metadata
+        const defaultTenant = session.user.user_metadata?.default_tenant || 
+                               session.user.app_metadata?.default_tenant ||
+                               null;
+
+        setProfile({
+          id: session.user.id,
+          email: session.user.email || "",
+          full_name: session.user.user_metadata?.full_name || "",
+          global_role: globalRole,
+          is_active: true,
+          default_tenant: defaultTenant || undefined,
+        });
+        
+        // Get tenant from URL or user metadata
+        let tenantKey = getTenantKey();
+        if (!tenantKey && defaultTenant) {
+          tenantKey = defaultTenant;
+          setTenantKey(tenantKey);
+        }
+        
+        let options: TenantOption[] = [];
+        
+        if (tenantKey) {
+          options = [{
+            id: tenantKey,
+            tenant_key: tenantKey,
+            name: "Loading...",
+            role: globalRole,
+          }];
+          setTenantOptions(options);
+          setSelectedTenantKey(tenantKey);
+          syncTenantKey(tenantKey);
+        } else {
+          setError("No workspace specified. Please use a valid link with ?tenant_key=your-workspace");
+        }
+        
+        setProfile(prev => prev ? {
+          ...prev,
+          accessible_tenants: options.map(t => t.tenant_key),
+        } : null);
+        
+      } catch (err: any) {
+        console.error("Auth check error:", err);
+        setError(err?.message || "Failed to verify session.");
+        setTimeout(() => {
+          window.location.href = "/login";
+        }, 2000);
+      } finally {
+        setIsCheckingAuth(false);
+        setAuthLoading(false);
+      }
+    }
+    
+    checkAuth();
+  }, []);
 
   async function handleLogout() {
     try {
@@ -214,7 +427,7 @@ export default function DashboardPage() {
     }
   }
 
-  const syncTenantKey = useCallback((tenantKey: string) => {
+  function syncTenantKey(tenantKey: string) {
     if (!tenantKey) return;
     
     if (typeof window !== "undefined") {
@@ -225,212 +438,72 @@ export default function DashboardPage() {
     }
     
     setSelectedTenantKey(tenantKey);
-  }, []);
-
-  async function loadAuthAndTenants() {
-    setAuthLoading(true);
-    setError("");
-
-    try {
-      const supabase = getSupabaseClient();
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-
-      if (userError || !user) {
-        window.location.replace("/login");
-        return;
-      }
-
-      // Get user's role
-      const globalRole = String(
-        user.app_metadata?.role ||
-        user.user_metadata?.role ||
-        user.app_metadata?.global_role ||
-        user.user_metadata?.global_role ||
-        "member"
-      ).toLowerCase();
-
-      const adminRoles = ["platform_admin", "admin", "owner"];
-      const isAdminUser = adminRoles.includes(globalRole);
-      setIsAdmin(isAdminUser);
-
-      // Try to get default tenant from user metadata
-      const defaultTenant = user.user_metadata?.default_tenant || 
-                           user.app_metadata?.default_tenant ||
-                           null;
-
-      setProfile({
-        id: user.id,
-        email: user.email || "",
-        full_name: user.user_metadata?.full_name || "",
-        global_role: globalRole,
-        is_active: true,
-        default_tenant: defaultTenant || undefined,
-      });
-
-      // Get tenant from URL first, then localStorage, then user metadata
-      let currentTenantKey = getTenantKey();
-      
-      // If no tenant in URL, try user metadata
-      if (!currentTenantKey && defaultTenant) {
-        currentTenantKey = defaultTenant;
-        console.log("Using default tenant from user metadata:", currentTenantKey);
-      }
-      
-      let options: TenantOption[] = [];
-
-      if (currentTenantKey) {
-        // Use the tenant from URL or metadata
-        options = [{
-          id: currentTenantKey,
-          tenant_key: currentTenantKey,
-          name: "Loading...",
-          role: globalRole,
-        }];
-        setTenantOptions(options);
-        syncTenantKey(currentTenantKey);
-      } else {
-        // If no tenant anywhere, try to get from API
-        try {
-          // Try to load dashboard summary to get tenant info
-          const summaryRes = await apiFetch("/api/dashboard/summary", {
-            enforceTenant: false,
-          });
-          
-          if (summaryRes.ok) {
-            const summaryData = await summaryRes.json();
-            if (summaryData?.tenant_key) {
-              const tenantKey = summaryData.tenant_key as string;
-              options = [{
-                id: tenantKey,
-                tenant_key: tenantKey,
-                name: summaryData.tenant_name || "Current Workspace",
-                role: globalRole,
-              }];
-              setTenantOptions(options);
-              syncTenantKey(tenantKey);
-            } else {
-              throw new Error("No tenant data found");
-            }
-          } else {
-            throw new Error("Failed to load tenant data");
-          }
-        } catch (err) {
-          console.error("Failed to auto-detect tenant:", err);
-          // Last resort: try to get tenant from email domain or other logic
-          const emailDomain = user.email?.split('@')[1];
-          if (emailDomain) {
-            const guessedTenant = emailDomain.split('.')[0];
-            console.log("Guessing tenant from email domain:", guessedTenant);
-            options = [{
-              id: guessedTenant,
-              tenant_key: guessedTenant,
-              name: guessedTenant,
-              role: globalRole,
-            }];
-            setTenantOptions(options);
-            syncTenantKey(guessedTenant);
-          } else {
-            setError("No workspace specified. Please use a valid link with ?tenant_key=your-workspace");
-            setAuthLoading(false);
-            return;
-          }
-        }
-      }
-
-      setProfile(prev => prev ? {
-        ...prev,
-        accessible_tenants: options.map(t => t.tenant_key),
-      } : null);
-
-    } catch (err: any) {
-      console.error(err);
-      setError(err?.message || "Failed to verify session.");
-      setTimeout(() => {
-        window.location.replace("/login");
-      }, 2000);
-    } finally {
-      setAuthLoading(false);
-    }
   }
 
   async function loadTenantData(tenantKey: string) {
     if (!tenantKey) return;
 
     setLoading(true);
+    setRefreshing(true);
     setError("");
 
     try {
-      // Try to load dashboard summary first to verify access
-      const summaryRes = await apiFetch(`/api/dashboard/summary`);
-      
-      if (!summaryRes.ok) {
-        if (summaryRes.status === 403) {
-          setError("You don't have access to this workspace. Please contact support.");
-          setLoading(false);
-          return;
-        }
-        if (summaryRes.status === 404) {
-          setError("Workspace not found. Please check your tenant_key.");
-          setLoading(false);
-          return;
-        }
-        throw new Error(`Failed to load data: ${summaryRes.status}`);
-      }
-      
-      const summaryData = await summaryRes.json();
-      setSummary(summaryData || summary);
-
-      // Load calls and leads
-      const [callsRes, leadsRes] = await Promise.all([
-        apiFetch(`/api/calls?limit=200`),
-        apiFetch(`/api/leads?limit=200`),
+      const [summaryRes, callsRes, leadsRes] = await Promise.all([
+        apiFetchWrapper(`/api/dashboard/summary`).then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        }),
+        apiFetchWrapper(`/api/calls?limit=200`).then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        }),
+        apiFetchWrapper(`/api/leads?limit=200`).then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        }),
       ]);
 
-      if (callsRes.ok) {
-        const callsData = await callsRes.json();
-        setCalls(Array.isArray(callsData) ? callsData : []);
-      } else if (callsRes.status === 403) {
-        console.warn("Access denied to calls");
-        setCalls([]);
-      }
+      setSummary(summaryRes || summary);
+      setCalls(Array.isArray(callsRes) ? callsRes : []);
+      setLeads(Array.isArray(leadsRes) ? leadsRes : []);
 
-      if (leadsRes.ok) {
-        const leadsData = await leadsRes.json();
-        setLeads(Array.isArray(leadsData) ? leadsData : []);
-      } else if (leadsRes.status === 403) {
-        console.warn("Access denied to leads");
-        setLeads([]);
-      }
-
-      // Update tenant name if we got it
-      if (summaryData?.tenant_name && selectedTenant?.name === "Loading...") {
+      if (summaryRes?.tenant_name && selectedTenant?.name === "Loading...") {
         setTenantOptions(prev =>
           prev.map(opt =>
-            opt.tenant_key === tenantKey ? { ...opt, name: summaryData.tenant_name } : opt
+            opt.tenant_key === tenantKey ? { ...opt, name: summaryRes.tenant_name } : opt
           )
         );
       }
     } catch (err: any) {
       console.error("Failed to load tenant data:", err);
-      setError(err?.message || "Could not load workspace data. Please try again.");
+      if (err.message?.includes("401") || err.message?.includes("403")) {
+        setError("Session expired. Please login again.");
+        setTimeout(() => {
+          window.location.href = "/login";
+        }, 2000);
+      } else {
+        setError("Could not load workspace data. Please try again.");
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }
 
   const handleTenantChange = useCallback((newTenantKey: string) => {
+    if (!profile?.accessible_tenants?.includes(newTenantKey)) {
+      setError("You don't have access to this workspace");
+      return;
+    }
+    
     syncTenantKey(newTenantKey);
-  }, [syncTenantKey]);
+  }, [profile]);
 
   useEffect(() => {
-    loadAuthAndTenants();
-  }, []);
-
-  useEffect(() => {
-    if (selectedTenantKey && !authLoading) {
+    if (selectedTenantKey && !authLoading && !isCheckingAuth) {
       loadTenantData(selectedTenantKey);
     }
-  }, [selectedTenantKey, authLoading]);
+  }, [selectedTenantKey, authLoading, isCheckingAuth]);
 
   const filteredCalls = useMemo(() => {
     if (!calls.length) return [];
@@ -445,7 +518,21 @@ export default function DashboardPage() {
     });
   }, [calls, search]);
 
-  if (authLoading) {
+  const filteredLeads = useMemo(() => {
+    if (!leads.length) return [];
+    return leads.filter(lead => {
+      const q = search.toLowerCase();
+      return (
+        lead.name?.toLowerCase().includes(q) ||
+        lead.business?.toLowerCase().includes(q) ||
+        lead.issue?.toLowerCase().includes(q) ||
+        lead.status?.toLowerCase().includes(q)
+      );
+    });
+  }, [leads, search]);
+
+  // Show loading while checking auth
+  if (isCheckingAuth || authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="rounded-3xl border border-slate-200 bg-white px-8 py-6 shadow-sm text-slate-700">
@@ -468,9 +555,20 @@ export default function DashboardPage() {
     );
   }
 
+  if (!profile) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="rounded-3xl border border-slate-200 bg-white px-8 py-6 shadow-sm text-slate-700">
+          <Button onClick={() => window.location.href = "/login"}>Go to Login</Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <div className="grid min-h-screen lg:grid-cols-[260px_1fr]">
+        {/* Sidebar */}
         <aside className="border-r border-slate-200 bg-white hidden lg:block">
           <div className="flex h-full flex-col">
             <div className="border-b border-slate-200 p-6">
@@ -483,6 +581,11 @@ export default function DashboardPage() {
                   <p className="text-xs text-slate-500">AI Voice Agents</p>
                 </div>
               </div>
+              {profile && (
+                <div className="mt-4 text-sm text-slate-600 truncate">
+                  <div>{profile.email}</div>
+                </div>
+              )}
             </div>
 
             <nav className="flex-1 space-y-1 p-4">
@@ -531,7 +634,13 @@ export default function DashboardPage() {
                     ? "Your key metrics and recent activity"
                     : page === "calls"
                     ? "All inbound and outbound calls"
-                    : "Workspace data"}
+                    : page === "deals"
+                    ? "Active opportunities and pipeline"
+                    : page === "tasks"
+                    ? "Follow-ups and action items"
+                    : page === "contacts"
+                    ? "People and companies in your CRM"
+                    : "Workspace configuration"}
                 </p>
               </div>
 
@@ -546,15 +655,36 @@ export default function DashboardPage() {
                   />
                 </div>
 
-                {tenantOptions.length > 0 && selectedTenant && (
+                {/* Tenant selector - only for admins */}
+                {isAdmin && tenantOptions.length > 1 && (
+                  <Select
+                    value={selectedTenantKey}
+                    onValueChange={handleTenantChange}
+                  >
+                    <SelectTrigger className="w-[260px] rounded-2xl border-slate-200">
+                      <SelectValue placeholder="Select workspace" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {tenantOptions.map((tenant) => (
+                        <SelectItem key={tenant.id} value={tenant.tenant_key}>
+                          {tenant.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+
+                {/* For regular users: show fixed workspace name */}
+                {!isAdmin && selectedTenant && (
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium">
-                    Workspace: {selectedTenant.name}
+                    Workspace: {selectedTenant.name || selectedTenantKey}
                   </div>
                 )}
               </div>
             </div>
           </header>
 
+          {/* Main content area */}
           <div className="p-6">
             {loading ? (
               <div className="flex items-center justify-center h-64">
@@ -562,6 +692,7 @@ export default function DashboardPage() {
               </div>
             ) : (
               <>
+                {/* Overview Section */}
                 {page === "overview" && (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                     <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
@@ -591,6 +722,7 @@ export default function DashboardPage() {
                       />
                     </div>
 
+                    {/* Recent Calls Table */}
                     <Card className="mt-8">
                       <CardHeader>
                         <CardTitle>Recent Calls</CardTitle>
@@ -630,6 +762,7 @@ export default function DashboardPage() {
                   </motion.div>
                 )}
 
+                {/* Calls Section */}
                 {page === "calls" && (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                     <Card>
@@ -671,9 +804,171 @@ export default function DashboardPage() {
                   </motion.div>
                 )}
 
+                {/* Deals Section */}
+                {page === "deals" && (
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Active Deals</CardTitle>
+                        <CardDescription>Current opportunities in pipeline</CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Title</TableHead>
+                              <TableHead>Stage</TableHead>
+                              <TableHead>Value</TableHead>
+                              <TableHead>Probability</TableHead>
+                              <TableHead>Contact</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {deals.map((deal) => (
+                              <TableRow key={deal.id}>
+                                <TableCell className="font-medium">{deal.title}</TableCell>
+                                <TableCell>{deal.stage || deal.status || "New"}</TableCell>
+                                <TableCell>{formatCurrency(deal.estimated_value)}</TableCell>
+                                <TableCell>{deal.probability || 0}%</TableCell>
+                                <TableCell>{deal.contact_name || "—"}</TableCell>
+                              </TableRow>
+                            ))}
+                            {deals.length === 0 && (
+                              <TableRow>
+                                <TableCell colSpan={5} className="text-center text-slate-500">
+                                  No deals found
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                )}
+
+                {/* Tasks Section */}
+                {page === "tasks" && (
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Tasks & Follow-ups</CardTitle>
+                        <CardDescription>Action items requiring attention</CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Title</TableHead>
+                              <TableHead>Status</TableHead>
+                              <TableHead>Priority</TableHead>
+                              <TableHead>Due Date</TableHead>
+                              <TableHead>Contact</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {tasks.map((task) => (
+                              <TableRow key={task.id}>
+                                <TableCell className="font-medium">{task.title}</TableCell>
+                                <TableCell>
+                                  <Badge variant="secondary">{task.status}</Badge>
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant={task.priority === "high" ? "destructive" : "secondary"}>
+                                    {task.priority || "medium"}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>{task.due_at ? new Date(task.due_at).toLocaleDateString() : "—"}</TableCell>
+                                <TableCell>{task.contact_name || "—"}</TableCell>
+                              </TableRow>
+                            ))}
+                            {tasks.length === 0 && (
+                              <TableRow>
+                                <TableCell colSpan={5} className="text-center text-slate-500">
+                                  No tasks found
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                )}
+
+                {/* Contacts Section */}
+                {page === "contacts" && (
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Contacts</CardTitle>
+                        <CardDescription>People and companies in your CRM</CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Name</TableHead>
+                              <TableHead>Email</TableHead>
+                              <TableHead>Phone</TableHead>
+                              <TableHead>Company</TableHead>
+                              <TableHead>Created</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {contacts.map((contact) => (
+                              <TableRow key={contact.id}>
+                                <TableCell className="font-medium">{contact.name}</TableCell>
+                                <TableCell>{contact.email || "—"}</TableCell>
+                                <TableCell>{contact.phone || "—"}</TableCell>
+                                <TableCell>{contact.company || "—"}</TableCell>
+                                <TableCell>{contact.created_at ? new Date(contact.created_at).toLocaleDateString() : "—"}</TableCell>
+                              </TableRow>
+                            ))}
+                            {contacts.length === 0 && (
+                              <TableRow>
+                                <TableCell colSpan={5} className="text-center text-slate-500">
+                                  No contacts found
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                )}
+
+                {/* Settings Section */}
+                {page === "settings" && (
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Workspace Settings</CardTitle>
+                        <CardDescription>Configure your workspace preferences</CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <div className="rounded-2xl border border-slate-200 p-4">
+                          <h3 className="font-medium mb-2">Account Information</h3>
+                          <p className="text-sm text-slate-600">Email: {profile?.email}</p>
+                          <p className="text-sm text-slate-600">Role: {profile?.global_role}</p>
+                          <p className="text-sm text-slate-600">Tenant: {selectedTenant?.name || selectedTenantKey}</p>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 p-4">
+                          <h3 className="font-medium mb-2">API Configuration</h3>
+                          <p className="text-sm text-slate-600">API Base: {API_BASE}</p>
+                        </div>
+                        <Button onClick={handleLogout} variant="outline" className="rounded-2xl">
+                          Sign Out
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                )}
+
                 {!selectedTenantKey && !loading && (
                   <div className="text-center py-20 text-slate-500">
-                    No workspace selected. Please use a valid link with ?tenant_key=your-workspace
+                    No workspace selected. Please contact support or use a valid link.
                   </div>
                 )}
               </>
