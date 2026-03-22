@@ -287,15 +287,15 @@ export default function DashboardPage() {
           if (summaryRes.ok) {
             const summaryData = await summaryRes.json();
             if (summaryData?.tenant_key) {
-              currentTenantKey = summaryData.tenant_key;
+              const tenantKey = summaryData.tenant_key as string;
               options = [{
-                id: currentTenantKey,
-                tenant_key: currentTenantKey,
+                id: tenantKey,
+                tenant_key: tenantKey,
                 name: summaryData.tenant_name || "Current Workspace",
                 role: globalRole,
               }];
               setTenantOptions(options);
-              syncTenantKey(currentTenantKey);
+              syncTenantKey(tenantKey);
             } else {
               throw new Error("No tenant data found");
             }
