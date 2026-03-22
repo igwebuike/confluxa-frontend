@@ -191,6 +191,16 @@ function formatDuration(seconds?: number | null) {
   return `${mins}m ${secs}s`;
 }
 
+function formatCurrency(value?: number | null) {
+  if (value == null) return "$0";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
 function StatCard({
   title,
   value,
@@ -395,23 +405,12 @@ export default function DashboardPage() {
         console.error("Summary API error:", summaryRes.status);
       }
       
-      // Fetch calls - DIRECT FETCH WITHOUT API WRAPPER TO DEBUG
+      // Fetch calls
       let callsData: CallRow[] = [];
       try {
-        console.log("Fetching calls from:", `${API_BASE}/api/calls?tenant_key=${tenantKey}`);
-        const directRes = await fetch(`${API_BASE}/api/calls?tenant_key=${tenantKey}`, {
-          headers: {
-            "Content-Type": "application/json",
-          },
-          credentials: "include",
-        });
-        
-        if (directRes.ok) {
-          const rawCalls = await directRes.json();
-          console.log("Raw calls response:", rawCalls);
-          console.log("Raw calls type:", typeof rawCalls);
-          console.log("Is array:", Array.isArray(rawCalls));
-          
+        const callsRes = await apiFetchWrapper(`/api/calls?limit=200`);
+        if (callsRes.ok) {
+          const rawCalls = await callsRes.json();
           if (Array.isArray(rawCalls)) {
             callsData = rawCalls.map((call: any) => ({
               id: call.id,
@@ -423,18 +422,13 @@ export default function DashboardPage() {
               summary: call.summary || "No summary",
               tenant_name: call.tenant_name || "Confluxa",
             }));
-            console.log("Processed calls:", callsData.length);
-            console.log("First call:", callsData[0]);
-          } else {
-            console.error("Calls response is not an array:", rawCalls);
+            console.log("Calls loaded:", callsData.length);
           }
         } else {
-          console.error("Direct calls API error:", directRes.status);
-          const errorText = await directRes.text();
-          console.error("Error body:", errorText);
+          console.error("Calls API error:", callsRes.status);
         }
       } catch (err) {
-        console.error("Direct calls fetch error:", err);
+        console.error("Calls fetch error:", err);
       }
       
       // Fetch leads
@@ -443,6 +437,7 @@ export default function DashboardPage() {
         const leadsRes = await apiFetchWrapper(`/api/leads?limit=200`);
         if (leadsRes.ok) {
           leadsData = await leadsRes.json();
+          console.log("Leads loaded:", leadsData.length);
         } else {
           console.error("Leads API error:", leadsRes.status);
           if (callsData.length > 0) {
@@ -461,12 +456,54 @@ export default function DashboardPage() {
         console.error("Leads fetch error:", err);
       }
 
+      // Fetch deals
+      let dealsData: any[] = [];
+      try {
+        const dealsRes = await apiFetchWrapper(`/api/deals?limit=200`);
+        if (dealsRes.ok) {
+          dealsData = await dealsRes.json();
+          console.log("Deals loaded:", dealsData.length);
+        } else {
+          console.error("Deals API error:", dealsRes.status);
+        }
+      } catch (err) {
+        console.error("Deals fetch error:", err);
+      }
+
+      // Fetch tasks
+      let tasksData: any[] = [];
+      try {
+        const tasksRes = await apiFetchWrapper(`/api/tasks?limit=200`);
+        if (tasksRes.ok) {
+          tasksData = await tasksRes.json();
+          console.log("Tasks loaded:", tasksData.length);
+        } else {
+          console.error("Tasks API error:", tasksRes.status);
+        }
+      } catch (err) {
+        console.error("Tasks fetch error:", err);
+      }
+
+      // Fetch contacts
+      let contactsData: any[] = [];
+      try {
+        const contactsRes = await apiFetchWrapper(`/api/contacts?limit=200`);
+        if (contactsRes.ok) {
+          contactsData = await contactsRes.json();
+          console.log("Contacts loaded:", contactsData.length);
+        } else {
+          console.error("Contacts API error:", contactsRes.status);
+        }
+      } catch (err) {
+        console.error("Contacts fetch error:", err);
+      }
+
       setSummary(summaryData || summary);
       setCalls(callsData);
       setLeads(Array.isArray(leadsData) ? leadsData : []);
-      
-      console.log("Final calls state length:", callsData.length);
-      console.log("Final calls state:", callsData);
+      setDeals(Array.isArray(dealsData) ? dealsData : []);
+      setTasks(Array.isArray(tasksData) ? tasksData : []);
+      setContacts(Array.isArray(contactsData) ? contactsData : []);
 
       if (summaryData?.tenant_name && selectedTenant?.name === "Loading...") {
         setTenantOptions(prev =>
@@ -511,6 +548,42 @@ export default function DashboardPage() {
       );
     });
   }, [calls, search]);
+
+  const filteredDeals = useMemo(() => {
+    if (!deals.length) return [];
+    return deals.filter(deal => {
+      const q = search.toLowerCase();
+      return (
+        deal.title?.toLowerCase().includes(q) ||
+        deal.contact_name?.toLowerCase().includes(q) ||
+        deal.status?.toLowerCase().includes(q)
+      );
+    });
+  }, [deals, search]);
+
+  const filteredTasks = useMemo(() => {
+    if (!tasks.length) return [];
+    return tasks.filter(task => {
+      const q = search.toLowerCase();
+      return (
+        task.title?.toLowerCase().includes(q) ||
+        task.contact_name?.toLowerCase().includes(q) ||
+        task.status?.toLowerCase().includes(q)
+      );
+    });
+  }, [tasks, search]);
+
+  const filteredContacts = useMemo(() => {
+    if (!contacts.length) return [];
+    return contacts.filter(contact => {
+      const q = search.toLowerCase();
+      return (
+        contact.name?.toLowerCase().includes(q) ||
+        contact.email?.toLowerCase().includes(q) ||
+        contact.phone?.includes(q)
+      );
+    });
+  }, [contacts, search]);
 
   // Show loading while checking auth
   if (isCheckingAuth || authLoading) {
@@ -775,7 +848,6 @@ export default function DashboardPage() {
                   </motion.div>
                 )}
 
-                {/* Deals Section */}
                 {page === "deals" && (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                     <Card>
@@ -795,7 +867,18 @@ export default function DashboardPage() {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {deals.length === 0 && (
+                            {filteredDeals.map((deal) => (
+                              <TableRow key={deal.id}>
+                                <TableCell className="font-medium">{deal.title}</TableCell>
+                                <TableCell>
+                                  <Badge variant="secondary">{deal.stage || deal.status || "Open"}</Badge>
+                                </TableCell>
+                                <TableCell>{formatCurrency(deal.estimated_value)}</TableCell>
+                                <TableCell>{deal.probability || 0}%</TableCell>
+                                <TableCell>{deal.contact_name || "—"}</TableCell>
+                              </TableRow>
+                            ))}
+                            {filteredDeals.length === 0 && (
                               <TableRow>
                                 <TableCell colSpan={5} className="text-center text-slate-500">
                                   No deals found
@@ -809,7 +892,6 @@ export default function DashboardPage() {
                   </motion.div>
                 )}
 
-                {/* Tasks Section */}
                 {page === "tasks" && (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                     <Card>
@@ -829,7 +911,22 @@ export default function DashboardPage() {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {tasks.length === 0 && (
+                            {filteredTasks.map((task) => (
+                              <TableRow key={task.id}>
+                                <TableCell className="font-medium">{task.title}</TableCell>
+                                <TableCell>
+                                  <Badge variant="secondary">{task.status}</Badge>
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant={task.priority === "high" ? "destructive" : "secondary"}>
+                                    {task.priority || "medium"}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>{task.due_at ? new Date(task.due_at).toLocaleDateString() : "—"}</TableCell>
+                                <TableCell>{task.contact_name || "—"}</TableCell>
+                              </TableRow>
+                            ))}
+                            {filteredTasks.length === 0 && (
                               <TableRow>
                                 <TableCell colSpan={5} className="text-center text-slate-500">
                                   No tasks found
@@ -843,7 +940,6 @@ export default function DashboardPage() {
                   </motion.div>
                 )}
 
-                {/* Contacts Section */}
                 {page === "contacts" && (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                     <Card>
@@ -863,7 +959,16 @@ export default function DashboardPage() {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {contacts.length === 0 && (
+                            {filteredContacts.map((contact) => (
+                              <TableRow key={contact.id}>
+                                <TableCell className="font-medium">{contact.name}</TableCell>
+                                <TableCell>{contact.email || "—"}</TableCell>
+                                <TableCell>{contact.phone || "—"}</TableCell>
+                                <TableCell>{contact.company || "—"}</TableCell>
+                                <TableCell>{contact.created_at ? new Date(contact.created_at).toLocaleDateString() : "—"}</TableCell>
+                              </TableRow>
+                            ))}
+                            {filteredContacts.length === 0 && (
                               <TableRow>
                                 <TableCell colSpan={5} className="text-center text-slate-500">
                                   No contacts found
@@ -877,7 +982,6 @@ export default function DashboardPage() {
                   </motion.div>
                 )}
 
-                {/* Settings Section */}
                 {page === "settings" && (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                     <Card>
