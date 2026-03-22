@@ -80,6 +80,49 @@ import {
   Bar,
 } from "recharts";
 
+type TenantPhoneNumber = {
+  id: string;
+  tenant_id: string;
+  label: string;
+  country_code: string;
+  phone_number: string;
+  phone_e164?: string;
+  notification_email?: string;
+  delivery_mode?: string;
+  is_active: boolean;
+  is_primary: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+
+type TenantRecipient = {
+  id: string;
+  email: string;
+  notification_type: string;
+  is_active: boolean;
+  created_at?: string;
+};
+
+type TenantDetail = {
+  ok: boolean;
+  tenant?: {
+    id: string;
+    tenant_key: string;
+    name: string;
+    display_name?: string;
+    is_active: boolean;
+    created_at?: string;
+  };
+  phone_numbers?: TenantPhoneNumber[];
+  notification_recipients?: TenantRecipient[];
+  stats?: {
+    calls: number;
+    contacts: number;
+    integrations: number;
+  };
+  error?: string;
+};
+
 type Summary = {
   calls_today: number;
   booked_meetings: number;
@@ -101,6 +144,7 @@ type CallRow = {
   outcome: string;
   summary: string;
 };
+
 
 type LeadRow = {
   id: string;
