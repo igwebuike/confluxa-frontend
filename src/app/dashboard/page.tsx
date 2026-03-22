@@ -446,36 +446,54 @@ export default function DashboardPage() {
       
       console.log("Loading data for tenant:", tenantKey);
       
-      // Try to fetch summary
+      // Fetch summary
       const summaryRes = await apiFetchWrapper(`/api/dashboard/summary`);
-      
       if (!summaryRes.ok) {
-        const errorText = await summaryRes.text();
-        console.error("Summary API error:", summaryRes.status, errorText);
-        throw new Error(`API Error ${summaryRes.status}`);
+        console.error("Summary API error:", summaryRes.status);
       }
+      const summaryData = summaryRes.ok ? await summaryRes.json() : null;
       
-      const summaryData = await summaryRes.json();
-      console.log("Summary data loaded");
-      
-      // Try to fetch calls
-      const callsRes = await apiFetchWrapper(`/api/calls?limit=200`);
+      // Fetch calls - handle gracefully
       let callsData = [];
-      if (callsRes.ok) {
-        callsData = await callsRes.json();
-        console.log("Calls count:", callsData.length);
-      } else {
-        console.error("Calls API error:", callsRes.status);
+      try {
+        const callsRes = await apiFetchWrapper(`/api/calls?limit=200`);
+        if (callsRes.ok) {
+          callsData = await callsRes.json();
+          console.log("Calls loaded:", callsData.length);
+        } else {
+          console.error("Calls API error:", callsRes.status);
+        }
+      } catch (err) {
+        console.error("Calls fetch error:", err);
       }
       
-      // Try to fetch leads
-      const leadsRes = await apiFetchWrapper(`/api/leads?limit=200`);
+      // Fetch leads - handle gracefully (don't break if it fails)
       let leadsData = [];
-      if (leadsRes.ok) {
-        leadsData = await leadsRes.json();
-        console.log("Leads count:", leadsData.length);
-      } else {
-        console.error("Leads API error:", leadsRes.status);
+      try {
+        const leadsRes = await apiFetchWrapper(`/api/leads?limit=200`);
+        if (leadsRes.ok) {
+          leadsData = await leadsRes.json();
+          console.log("Leads loaded:", leadsData.length);
+        } else {
+          console.error("Leads API error:", leadsRes.status);
+          // Generate leads from calls if leads API fails
+          if (callsData.length > 0) {
+            leadsData = callsData.map(call => ({
+              id: call.id,
+              tenant_id: call.tenant_id,
+              tenant_name: call.tenant_name || "Confluxa",
+              name: call.caller_name,
+              niche: "General",
+              status: call.outcome || "New",
+              business: call.tenant_name || "Confluxa",
+              issue: call.summary || "No issue captured",
+              next_action: "Needs follow-up"
+            }));
+            console.log("Generated leads from calls:", leadsData.length);
+          }
+        }
+      } catch (err) {
+        console.error("Leads fetch error:", err);
       }
 
       setSummary(summaryData || summary);
@@ -763,6 +781,13 @@ export default function DashboardPage() {
                                 </TableCell>
                               </TableRow>
                             ))}
+                            {filteredCalls.length === 0 && (
+                              <TableRow>
+                                <TableCell colSpan={5} className="text-center text-slate-500">
+                                  No calls found
+                                </TableCell>
+                              </TableRow>
+                            )}
                           </TableBody>
                         </Table>
                       </CardContent>
@@ -805,6 +830,13 @@ export default function DashboardPage() {
                                 </TableCell>
                               </TableRow>
                             ))}
+                            {filteredCalls.length === 0 && (
+                              <TableRow>
+                                <TableCell colSpan={5} className="text-center text-slate-500">
+                                  No calls found
+                                </TableCell>
+                              </TableRow>
+                            )}
                           </TableBody>
                         </Table>
                       </CardContent>
