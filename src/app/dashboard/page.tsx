@@ -63,6 +63,7 @@ type AuthUser = {
   global_role?: string;
   is_active?: boolean;
   accessible_tenants?: string[];
+  default_tenant?: string;
 };
 
 type DashboardSummary = {
@@ -252,32 +253,43 @@ export default function DashboardPage() {
       const isAdminUser = adminRoles.includes(globalRole);
       setIsAdmin(isAdminUser);
 
+      // Try to get default tenant from user metadata
+      const defaultTenant = user.user_metadata?.default_tenant || 
+                           user.app_metadata?.default_tenant ||
+                           null;
+
       setProfile({
         id: user.id,
         email: user.email || "",
         full_name: user.user_metadata?.full_name || "",
         global_role: globalRole,
         is_active: true,
+        default_tenant: defaultTenant || undefined,
       });
 
-      // Get tenant from URL
+      // Get tenant from URL first, then localStorage, then user metadata
       let currentTenantKey = getTenantKey();
+      
+      // If no tenant in URL, try user metadata
+      if (!currentTenantKey && defaultTenant) {
+        currentTenantKey = defaultTenant;
+        console.log("Using default tenant from user metadata:", currentTenantKey);
+      }
       
       let options: TenantOption[] = [];
 
-      // For now, use the tenant from URL or localStorage
       if (currentTenantKey) {
-        // Use the tenant from URL as the only option
+        // Use the tenant from URL or metadata
         options = [{
           id: currentTenantKey,
           tenant_key: currentTenantKey,
-          name: "Current Workspace",
+          name: "Loading...",
           role: globalRole,
         }];
         setTenantOptions(options);
         syncTenantKey(currentTenantKey);
       } else {
-        // If no tenant in URL, try to get from dashboard summary (fallback)
+        // If no tenant anywhere, try to get from API
         try {
           // Try to load dashboard summary to get tenant info
           const summaryRes = await apiFetch("/api/dashboard/summary", {
@@ -304,9 +316,24 @@ export default function DashboardPage() {
           }
         } catch (err) {
           console.error("Failed to auto-detect tenant:", err);
-          setError("No workspace specified. Please use a valid link with ?tenant_key=your-workspace");
-          setAuthLoading(false);
-          return;
+          // Last resort: try to get tenant from email domain or other logic
+          const emailDomain = user.email?.split('@')[1];
+          if (emailDomain) {
+            const guessedTenant = emailDomain.split('.')[0];
+            console.log("Guessing tenant from email domain:", guessedTenant);
+            options = [{
+              id: guessedTenant,
+              tenant_key: guessedTenant,
+              name: guessedTenant,
+              role: globalRole,
+            }];
+            setTenantOptions(options);
+            syncTenantKey(guessedTenant);
+          } else {
+            setError("No workspace specified. Please use a valid link with ?tenant_key=your-workspace");
+            setAuthLoading(false);
+            return;
+          }
         }
       }
 
@@ -342,6 +369,11 @@ export default function DashboardPage() {
           setLoading(false);
           return;
         }
+        if (summaryRes.status === 404) {
+          setError("Workspace not found. Please check your tenant_key.");
+          setLoading(false);
+          return;
+        }
         throw new Error(`Failed to load data: ${summaryRes.status}`);
       }
       
@@ -371,7 +403,7 @@ export default function DashboardPage() {
       }
 
       // Update tenant name if we got it
-      if (summaryData?.tenant_name && selectedTenant?.name === "Current Workspace") {
+      if (summaryData?.tenant_name && selectedTenant?.name === "Loading...") {
         setTenantOptions(prev =>
           prev.map(opt =>
             opt.tenant_key === tenantKey ? { ...opt, name: summaryData.tenant_name } : opt
