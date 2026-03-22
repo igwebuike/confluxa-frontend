@@ -454,7 +454,7 @@ export default function DashboardPage() {
       const summaryData = summaryRes.ok ? await summaryRes.json() : null;
       
       // Fetch calls - handle gracefully
-      let callsData = [];
+      let callsData: any[] = [];
       try {
         const callsRes = await apiFetchWrapper(`/api/calls?limit=200`);
         if (callsRes.ok) {
@@ -468,7 +468,7 @@ export default function DashboardPage() {
       }
       
       // Fetch leads - handle gracefully (don't break if it fails)
-      let leadsData = [];
+      let leadsData: any[] = [];
       try {
         const leadsRes = await apiFetchWrapper(`/api/leads?limit=200`);
         if (leadsRes.ok) {
@@ -478,7 +478,7 @@ export default function DashboardPage() {
           console.error("Leads API error:", leadsRes.status);
           // Generate leads from calls if leads API fails
           if (callsData.length > 0) {
-            leadsData = callsData.map(call => ({
+            leadsData = callsData.map((call: any) => ({
               id: call.id,
               tenant_id: call.tenant_id,
               tenant_name: call.tenant_name || "Confluxa",
