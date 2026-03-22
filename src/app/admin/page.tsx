@@ -34,7 +34,6 @@ import {
 
 import { getSupabaseClient } from "@/lib/supabase";
 import { apiFetch } from "@/lib/api";
-import { getTenantKey } from "@/lib/tenant-context";
 
 import {
   Card,
@@ -144,49 +143,6 @@ type Health = {
     percent: number;
   };
   admin_view?: boolean;
-};
-
-type TenantPhoneNumber = {
-  id: string;
-  tenant_id: string;
-  label: string;
-  country_code: string;
-  phone_number: string;
-  phone_e164?: string;
-  notification_email?: string;
-  delivery_mode?: string;
-  is_active: boolean;
-  is_primary: boolean;
-  created_at?: string;
-  updated_at?: string;
-};
-
-type TenantRecipient = {
-  id: string;
-  email: string;
-  notification_type: string;
-  is_active: boolean;
-  created_at?: string;
-};
-
-type TenantDetail = {
-  ok: boolean;
-  tenant?: {
-    id: string;
-    tenant_key: string;
-    name: string;
-    display_name?: string;
-    is_active: boolean;
-    created_at?: string;
-  };
-  phone_numbers?: TenantPhoneNumber[];
-  notification_recipients?: TenantRecipient[];
-  stats?: {
-    calls: number;
-    contacts: number;
-    integrations: number;
-  };
-  error?: string;
 };
 
 type AdminSection =
@@ -526,7 +482,9 @@ export default function ConfluxaAdminPage() {
     }
   }
 
+  // FILTERED DATA - This updates when tenantFilter changes
   const filteredCalls = useMemo(() => {
+    if (!calls.length) return [];
     return calls.filter((item) => {
       const matchesTenant =
         tenantFilter === "all" ||
@@ -549,6 +507,7 @@ export default function ConfluxaAdminPage() {
   }, [calls, query, tenantFilter]);
 
   const filteredLeads = useMemo(() => {
+    if (!leads.length) return [];
     return leads.filter((item) => {
       const matchesTenant =
         tenantFilter === "all" ||
@@ -571,6 +530,7 @@ export default function ConfluxaAdminPage() {
   }, [leads, query, tenantFilter]);
 
   const filteredTenants = useMemo(() => {
+    if (!tenants.length) return [];
     return tenants.filter((tenant) => {
       const matchesTenant =
         tenantFilter === "all" ||
@@ -586,6 +546,7 @@ export default function ConfluxaAdminPage() {
     });
   }, [tenants, query, tenantFilter]);
 
+  // ANALYTICS - This updates when tenantFilter changes
   const analyticsFilteredTenants = useMemo(() => {
     if (tenantFilter === "all") return tenants;
     return tenants.filter(
