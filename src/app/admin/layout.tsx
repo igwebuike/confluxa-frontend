@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { getSupabaseClient } from "@/lib/supabase";
 
 type AccessState = "checking" | "allowed" | "denied";
 
@@ -14,6 +14,7 @@ export default function AdminLayout({
 
   useEffect(() => {
     const checkAccess = async () => {
+      const supabase = getSupabaseClient();
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -39,7 +40,7 @@ export default function AdminLayout({
         user.user_metadata?.role ||
         "";
 
-      if (role !== "admin") {
+      if (role !== "admin" && role !== "platform_admin") {
         window.location.replace("/dashboard");
         return;
       }
